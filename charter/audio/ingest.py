@@ -33,15 +33,19 @@ class Tags:
 
 
 def decode_audio(path: str | Path, *, sr: int = ANALYSIS_SR,
-                 loudnorm: bool = True) -> AudioBuffer:
-    """Decode any FFmpeg-readable file to a mono float32 buffer at ``sr``."""
+                 loudnorm: bool = True, max_seconds: float | None = None) -> AudioBuffer:
+    """Decode any FFmpeg-readable file to a mono float32 buffer at ``sr``.
+
+    ``max_seconds`` truncates the decode — handy for a fast end-to-end test on a
+    clip before committing to a full-song (slow) separation pass.
+    """
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg/ffprobe not found on PATH")
     af = "loudnorm=I=-16:TP=-1.5:LRA=11" if loudnorm else "anull"
-    cmd = [
-        "ffmpeg", "-v", "error", "-i", str(path),
-        "-ac", "1", "-ar", str(sr), "-af", af, "-f", "f32le", "-",
-    ]
+    cmd = ["ffmpeg", "-v", "error", "-i", str(path)]
+    if max_seconds:
+        cmd += ["-t", str(max_seconds)]
+    cmd += ["-ac", "1", "-ar", str(sr), "-af", af, "-f", "f32le", "-"]
     proc = subprocess.run(cmd, capture_output=True)
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg decode failed: {proc.stderr.decode(errors='replace')[:400]}")
@@ -75,13 +79,17 @@ def read_tags(path: str | Path) -> Tags:
     )
 
 
-def encode_opus(src: str | Path, dst: str | Path, *, bitrate: str = "80k") -> Path:
-    """Encode ``src`` to ``dst`` as Opus (~80 kbps, the recommended CH codec)."""
+def encode_opus(src: str | Path, dst: str | Path, *, bitrate: str = "80k",
+                max_seconds: float | None = None) -> Path:
+    """Encode ``src`` to ``dst`` as Opus (~80 kbps, the recommended CH codec).
+
+    ``max_seconds`` truncates to match a clipped chart so the folder is consistent.
+    """
     dst = Path(dst)
-    cmd = [
-        "ffmpeg", "-v", "error", "-y", "-i", str(src),
-        "-c:a", "libopus", "-b:a", bitrate, str(dst),
-    ]
+    cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(src)]
+    if max_seconds:
+        cmd += ["-t", str(max_seconds)]
+    cmd += ["-c:a", "libopus", "-b:a", bitrate, str(dst)]
     proc = subprocess.run(cmd, capture_output=True)
     if proc.returncode != 0:
         raise RuntimeError(f"opus encode failed: {proc.stderr.decode(errors='replace')[:400]}")

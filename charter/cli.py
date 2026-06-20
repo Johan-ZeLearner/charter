@@ -53,7 +53,22 @@ def _cmd_midi2chart(args: argparse.Namespace) -> int:
 
 
 def _cmd_mp3tochart(args: argparse.Namespace) -> int:
+    import logging
+
     from .audio.pipeline import mp3_to_chart_folder
+    from .audio.separation import choose_separator
+
+    if not args.quiet:
+        logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+
+    separator = choose_separator(args.sep, device=args.device)
+    if separator.name == "demucs":
+        print(
+            "note: using Demucs — the first run downloads ~80 MB of model weights, "
+            "and separating a full song takes minutes on CPU/MPS. Tip: add "
+            "`--max-seconds 30` to test on a clip first.",
+            file=sys.stderr,
+        )
 
     folder, diag = mp3_to_chart_folder(
         args.input,
@@ -62,6 +77,8 @@ def _cmd_mp3tochart(args: argparse.Namespace) -> int:
         artist=args.artist,
         charter=args.charter,
         encode_audio=not args.no_audio,
+        max_seconds=args.max_seconds,
+        separator=separator,
     )
     print(
         f"wrote {folder}  [{diag.gate}]  "
@@ -140,7 +157,13 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--name", default=None)
     a.add_argument("--artist", default=None)
     a.add_argument("--charter", default="charter AI")
+    a.add_argument("--sep", default="auto", choices=["auto", "demucs", "hpss", "passthrough"],
+                   help="drum separator (auto = Demucs if installed, else HPSS)")
+    a.add_argument("--device", default=None, help="demucs device: mps / cuda / cpu (default auto)")
+    a.add_argument("--max-seconds", type=float, default=None,
+                   help="only process the first N seconds (fast test on a clip)")
     a.add_argument("--no-audio", action="store_true", help="skip song.opus encoding")
+    a.add_argument("--quiet", action="store_true", help="suppress per-stage progress logs")
     a.add_argument("--validate", action="store_true", help="run scan-chart after writing")
     a.set_defaults(func=_cmd_mp3tochart)
 

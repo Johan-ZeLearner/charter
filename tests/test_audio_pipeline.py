@@ -9,7 +9,12 @@ from scipy.io import wavfile
 from charter.audio.ingest import ffmpeg_available
 from charter.audio.interfaces import AudioBuffer
 from charter.audio.pipeline import mp3_to_chart_folder, transcribe_buffer
+from charter.audio.separation import PercussiveSeparator
 from charter.drumnote.model import Lane
+
+# Pin the dependency-free baseline so the suite is fast and deterministic
+# regardless of whether the optional Demucs adapter happens to be installed.
+HPSS = PercussiveSeparator()
 from charter.validate import assert_four_lane_pro, scan_unavailable_reason
 from tests.fixtures.synth import synth_drum_track
 
@@ -22,7 +27,7 @@ needs_ffmpeg = pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg not ins
 
 def test_transcribe_buffer_produces_notes():
     t = synth_drum_track(bpm=120.0, bars=4)
-    song, diag = transcribe_buffer(AudioBuffer(t.samples, t.sr))
+    song, diag = transcribe_buffer(AudioBuffer(t.samples, t.sr), separator=HPSS)
     notes = song.tracks  # dict
     expert = next(iter(notes.values()))
     assert len(expert) > 0
@@ -39,7 +44,7 @@ def test_buffer_pipeline_validates_as_four_lane_pro(tmp_path):
     from charter.drumnote import Difficulty, Song
 
     t = synth_drum_track(bpm=120.0, bars=4)
-    song, _ = transcribe_buffer(AudioBuffer(t.samples, t.sr))
+    song, _ = transcribe_buffer(AudioBuffer(t.samples, t.sr), separator=HPSS)
     folder = tmp_path / "song"
     song.write_folder(folder)
     verdict = assert_four_lane_pro(folder)
@@ -55,7 +60,8 @@ def test_file_pipeline_end_to_end_playable(tmp_path):
     wav = tmp_path / "in.wav"
     wavfile.write(wav, t.sr, (t.samples * 32767).astype(np.int16))
 
-    folder, diag = mp3_to_chart_folder(wav, tmp_path / "song", name="Synth", artist="charter")
+    folder, diag = mp3_to_chart_folder(wav, tmp_path / "song", name="Synth",
+                                       artist="charter", separator=HPSS)
     assert (folder / "notes.chart").exists()
     assert (folder / "song.ini").exists()
     assert (folder / "song.opus").exists()  # encoded audio -> actually playable
