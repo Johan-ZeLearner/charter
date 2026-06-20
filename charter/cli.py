@@ -71,6 +71,17 @@ def _cmd_mp3tochart(args: argparse.Namespace) -> int:
         f"  ~{diag.bpm:.1f} BPM, {diag.beats} beats, {diag.onsets} onsets "
         f"-> {diag.notes} notes  (drum RMS {diag.drum_rms:.4f})"
     )
+    if diag.notes == 0:
+        print(
+            "  !! EMPTY CHART: no drum notes were transcribed — Clone Hero will "
+            "show NO instrument. The baseline likely couldn't hear drums in this "
+            "mix (try a drum-forward track, or install the SOTA adapters)."
+        )
+    elif diag.notes < max(8, diag.beats // 2):
+        print(
+            f"  !! SPARSE CHART: only {diag.notes} notes for ~{diag.beats} beats — "
+            "the baseline found few onsets; the chart may feel near-empty."
+        )
     if diag.gate == "REFUSE":
         print("  REFUSE: drums too quiet/buried — output is likely unusable.")
     for w in diag.warnings[:8]:

@@ -23,6 +23,7 @@ class Song:
     tempo_map: TempoMap
     tracks: dict[Difficulty, list[DrumNote]] = field(default_factory=dict)
     offset_seconds: float = 0.0
+    music_stream: str | None = None  # e.g. "song.opus"; binds audio in [Song]
 
     def render_chart_text(self) -> str:
         sections = {
@@ -35,6 +36,10 @@ class Song:
             artist=self.meta.artist,
             charter=self.meta.charter,
             offset_seconds=self.offset_seconds,
+            album=self.meta.album,
+            year=self.meta.year,
+            genre=self.meta.genre,
+            music_stream=self.music_stream,
         )
 
     def write_folder(self, folder: str | Path, audio_path: str | Path | None = None) -> Path:

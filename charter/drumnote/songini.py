@@ -33,9 +33,13 @@ def render_song_ini(meta: SongMeta) -> str:
         f"artist = {meta.artist}",
         f"album = {meta.album}",
         f"genre = {meta.genre}",
-        f"year = {meta.year}",
+    ]
+    if meta.year:  # an empty `year =` line can trip strict ini parsers
+        lines.append(f"year = {meta.year}")
+    lines += [
         f"charter = {meta.charter}",
         f"diff_drums = {meta.diff_drums}",
+        f"diff_drums_real = {meta.diff_drums}",  # Pro Drums difficulty
         # Force the drums track to parse as 4-lane Pro; never set both flags.
         "pro_drums = True",
         "five_lane_drums = False",

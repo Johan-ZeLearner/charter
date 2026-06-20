@@ -87,6 +87,11 @@ def render_sync_track(tempo_map: TempoMap) -> str:
     return f"[SyncTrack]\n{{\n{body}\n}}"
 
 
+def _quote(value: str) -> str:
+    """Quote a ``.chart`` string value (inner quotes downgraded to keep it valid)."""
+    return '"' + str(value).replace('"', "'") + '"'
+
+
 def render_song_section(
     *,
     resolution: int,
@@ -94,16 +99,40 @@ def render_song_section(
     name: str,
     artist: str,
     charter: str,
+    album: str = "",
+    year: str = "",
+    genre: str = "",
+    music_stream: str | None = None,
 ) -> str:
-    """Render the ``[Song]`` header. Sync is baked via ``Offset`` (never delay)."""
+    """Render the ``[Song]`` header, matching Moonscraper's full key set.
+
+    Real Clone Hero builds are stricter than scan-chart: a sparse ``[Song]`` block
+    can make the chart fail to register an instrument. We emit the keys Moonscraper
+    always writes. Sync is baked via ``Offset`` (never ``delay``).
+    """
     lines = [
-        f'{_INDENT}Name = "{name}"',
-        f'{_INDENT}Artist = "{artist}"',
-        f'{_INDENT}Charter = "{charter}"',
+        f"{_INDENT}Name = {_quote(name)}",
+        f"{_INDENT}Artist = {_quote(artist)}",
+        f"{_INDENT}Charter = {_quote(charter)}",
+        f"{_INDENT}Album = {_quote(album)}",
+        f"{_INDENT}Year = {_quote(', ' + year if year else '')}",
         f"{_INDENT}Offset = {offset_seconds:g}",
         f"{_INDENT}Resolution = {resolution}",
+        f"{_INDENT}Player2 = bass",
+        f"{_INDENT}Difficulty = 0",
+        f"{_INDENT}PreviewStart = 0",
+        f"{_INDENT}PreviewEnd = 0",
+        f"{_INDENT}Genre = {_quote(genre)}",
+        f'{_INDENT}MediaType = "cd"',
     ]
+    if music_stream:
+        lines.append(f"{_INDENT}MusicStream = {_quote(music_stream)}")
     return "[Song]\n{\n" + "\n".join(lines) + "\n}"
+
+
+def render_events_section() -> str:
+    """An (empty) ``[Events]`` section — Moonscraper always emits this block."""
+    return "[Events]\n{\n}"
 
 
 def render_difficulty_section(section_name: str, notes: list[DrumNote]) -> str:
@@ -126,6 +155,10 @@ def render_chart(
     artist: str,
     charter: str,
     offset_seconds: float = 0.0,
+    album: str = "",
+    year: str = "",
+    genre: str = "",
+    music_stream: str | None = None,
 ) -> str:
     """Render a full ``.chart`` file.
 
@@ -139,8 +172,13 @@ def render_chart(
             name=name,
             artist=artist,
             charter=charter,
+            album=album,
+            year=year,
+            genre=genre,
+            music_stream=music_stream,
         ),
         render_sync_track(tempo_map),
+        render_events_section(),
     ]
     order = ["ExpertDrums", "HardDrums", "MediumDrums", "EasyDrums"]
     for section in order:

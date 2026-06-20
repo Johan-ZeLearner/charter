@@ -99,6 +99,8 @@ def mp3_to_chart_folder(
     """End-to-end: audio file -> playable Clone Hero song folder (+ song.opus)."""
     song, diag = transcribe_file(path, **kwargs)
     folder = Path(out)
+    if encode_audio:
+        song.music_stream = "song.opus"  # bind audio in the .chart [Song] block
     song.write_folder(folder)
     if encode_audio:
         encode_opus(path, folder / "song.opus")
