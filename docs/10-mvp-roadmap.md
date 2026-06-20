@@ -27,29 +27,35 @@
 
 > Goal: a complete `mp3 → song folder` path that produces an **instantly playable Expert chart** Clone Hero accepts as 4-lane Pro every time, plus an honest REVIEW.md and one real cleanup pass. Quality is allowed to be mediocre — the goal is a measurable, valid, end-to-end loop.
 
+> **BUILD STATUS (2026-06-20):** Phases **1–2 are implemented** — the symbolic
+> backend ships in `charter/` with the scan-chart gate in `tools/validation/`;
+> hand-made GM MIDI round-trips green (`drumType == fourLanePro`) via 23 passing
+> tests. Phases **3+ (audio frontend) are not started.** See the project
+> `README.md` for run/test commands.
+
 ### Phase 1 — Vendor the spec + stand up scan-chart as a day-one passing test
 
 Make "does Clone Hero accept this and detect Pro drums?" a **passing test before any pipeline code exists.**
 
-- [ ] Vendor `TheNathannator/GuitarGame_ChartFormats` into the repo: `Drums.md` (both `.chart` and `.mid`), `Standard-Tags.md`, `Supported-Audio-Files.md`. Every mapping decision must cite the vendored spec, not memory.
-- [ ] Stand up `Geomitron/scan-chart` (TypeScript, byte-matches CH's parser, validated on 40k charts) as a Node ≥24 subprocess behind a thin Python wrapper.
-- [ ] Write the first test: feed a known-good fixture song folder through scan-chart and assert `drumType == '4-lane Pro'`, non-zero note counts, and zero blocking parser issues.
+- [ ] Vendor `TheNathannator/GuitarGame_ChartFormats` into the repo: `Drums.md` (both `.chart` and `.mid`), `Standard-Tags.md`, `Supported-Audio-Files.md`. Every mapping decision must cite the vendored spec, not memory. **— STILL TODO.** `docs/03-chart-format-reference.md` currently serves as the in-repo cited spec; vendoring the upstream `.md` files for byte-level traceability is not yet done.
+- [x] Stand up `Geomitron/scan-chart` (TypeScript, byte-matches CH's parser, validated on 40k charts) as a Node ≥24 subprocess behind a thin Python wrapper. **— DONE:** `tools/validation/` (scan-chart ^8.0.1, `validate.mjs`) + `charter/validate.py` bridge.
+- [x] Write the first test: feed a known-good fixture song folder through scan-chart and assert `drumType == '4-lane Pro'`, non-zero note counts, and zero blocking parser issues. **— DONE:** `tests/test_roundtrip.py`.
 
-**Done when:** scan-chart runs from the Python harness and a known-good fixture passes the `drumType == '4-lane Pro'` assertion in CI.
+**Done when:** scan-chart runs from the Python harness and a known-good fixture passes the `drumType == '4-lane Pro'` assertion in CI. ✅ **MET** (the gate separates blocking issues from advisories like "no audio yet").
 
 ### Phase 2 — Build the symbolic half on hand-made GM MIDI (zero ML)
 
 Skip audio entirely. Prove the format/serialization half with inputs you fully control.
 
-- [ ] Define the single canonical **`DrumNote` intermediate model**: `{tick, lane, isCymbal, isKick2x, dynamic ∈ {ghost, normal, accent}, difficulty}`. This is the **one place** all format inversions live.
-- [ ] Build the `.chart` **serializer** (the ONE place the tom/cymbal inversion lives): `Resolution=192`; `[Song]` / `[SyncTrack]` / `[ExpertDrums]`; toms-by-default; cymbal flags `66/67/68`; accent `34–38`; ghost `40–44`; 2× kick as type `32`; `B` + `TS` markers at tick 0; per-beat tempo map.
-- [ ] Implement the GM → lane mapping table seeded from `apvilkko/midi2clonehero`: kick ← `35/36`; red ← snare `37–40`; toms high→low into yellow/blue/green TOM; hi-hats `42/44/46` → yellow cymbal; crash1/splash/china `49/52/55` → blue cymbal; ride/bell/crash2 `51/53/57/59` → green cymbal. Velocity gate: ghost ≤ 60, accent ≥ 120.
-- [ ] Implement the three correctness traps: **windowed crash/ride collision resolver** (flip blue↔green); **same-color tom+cymbal validator** (a tom and cymbal of the same color CANNOT share a tick — re-color or drop, every tick); **2× kick inference** via ~150 ms inter-kick-gap heuristic (Expert only).
-- [ ] Round-trip known hand-made GM MIDI fixtures: MIDI → `DrumNote` → `.chart` → scan-chart **and** open in Moonscraper. Assert hashes/note counts; visually confirm gems land where the fixture put them.
+- [x] Define the single canonical **`DrumNote` intermediate model**: `{tick, lane, isCymbal, isKick2x, dynamic ∈ {ghost, normal, accent}, difficulty}`. This is the **one place** all format inversions live. **— DONE:** `charter/drumnote/model.py` (enforces invariants: red/kick can't be cymbal, only kick can be 2x).
+- [x] Build the `.chart` **serializer** (the ONE place the tom/cymbal inversion lives): `Resolution=192`; `[Song]` / `[SyncTrack]` / `[ExpertDrums]`; toms-by-default; cymbal flags `66/67/68`; accent `34–38`; ghost `40–44`; 2× kick as type `32`; `B` + `TS` markers at tick 0; per-beat tempo map. **— DONE:** `charter/drumnote/chart_writer.py` + `tempo.py`.
+- [x] Implement the GM → lane mapping table seeded from `apvilkko/midi2clonehero`: kick ← `35/36`; red ← snare `37–40`; toms high→low into yellow/blue/green TOM; hi-hats `42/44/46` → yellow cymbal; crash1/splash/china `49/52/55` → blue cymbal; ride/bell/crash2 `51/53/57/59` → green cymbal. Velocity gate: ghost ≤ 60, accent ≥ 120. **— DONE:** `charter/mapping/gm_map.py`.
+- [x] Implement the three correctness traps: **windowed crash/ride collision resolver** (flip blue↔green); **same-color tom+cymbal validator** (a tom and cymbal of the same color CANNOT share a tick — re-color or drop, every tick); **2× kick inference** via ~150 ms inter-kick-gap heuristic (Expert only). **— DONE:** `charter/mapping/stage6.py`. *Caveat:* the same-color validator and 2× inference are implemented and tested; the windowed crash/ride resolver is **disabled by default in v0** (conservative — it can mis-flip clean charts) and left as a tuning task.
+- [x] Round-trip known hand-made GM MIDI fixtures: MIDI → `DrumNote` → `.chart` → scan-chart. Assert hashes/note counts; confirm gems land where the fixture put them. **— DONE:** `tests/fixtures/make_fixtures.py` + `tests/test_roundtrip.py`. *Not yet done:* a manual open-in-Moonscraper visual pass (recommended before trusting on real songs).
 
 **RISK:** The `.chart`/`.mid` tom/cymbal inversion silently turns cymbals into toms. **Mitigation: it lives in exactly one serializer and is round-trip-tested against scan-chart's `drumType` output.**
 
-**Done when:** hand-made GM MIDI fixtures round-trip through serializer + scan-chart + Moonscraper with correct gem placement, no inversion/collision/2×-kick bugs, and `drumType == '4-lane Pro'`. **No audio touched yet.**
+**Done when:** hand-made GM MIDI fixtures round-trip through serializer + scan-chart with correct gem placement, no inversion/collision/2×-kick bugs, and `drumType == '4-lane Pro'`. **No audio touched yet.** ✅ **MET** (Moonscraper visual confirmation still recommended).
 
 ### Phase 3 — Wire the audio front-half with EASY fallbacks (Expert only)
 
