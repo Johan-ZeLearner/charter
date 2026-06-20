@@ -10,9 +10,10 @@ const LANES = ['red', 'yellow', 'blue', 'green'];
 const COL = { red:0xe6394a, yellow:0xf2c83f, blue:0x3a82f6, green:0x33c66b, kick:0xff8c2e };
 const LANE_W = 1.05;
 const BOARD_W = LANE_W * 4;
-const SPEED = 7.0;            // world units per second of scroll
+const SPEED = 6.0;           // world units per second of scroll
 const STRIKE_Z = 3.5;        // where notes are "hit" (near the camera)
-const LOOKAHEAD = 2.6;       // seconds of chart visible ahead of the strike
+const LOOKAHEAD = 3.5;       // seconds of upcoming chart visible above the strike
+const PAST = 0.4;            // seconds a hit note lingers below the strike
 const FAR_Z = STRIKE_Z - LOOKAHEAD * SPEED;
 const laneX = (i) => (i - 1.5) * LANE_W;
 
@@ -50,11 +51,15 @@ el.highway.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0c0e14);
-scene.fog = new THREE.Fog(0x0c0e14, Math.abs(FAR_Z) * 0.45, Math.abs(FAR_Z) + 6);
+// Fog from the real camera->far-end distance so the WHOLE lookahead stays
+// visible (only the very back softens), rather than fogging out upcoming notes.
+const CAM = { y: 6.2, z: STRIKE_Z + 5.5 };
+const FAR_DIST = Math.hypot(CAM.z - FAR_Z, CAM.y);
+scene.fog = new THREE.Fog(0x0c0e14, FAR_DIST * 0.5, FAR_DIST + 6);
 
-const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 200);
-camera.position.set(0, 4.7, STRIKE_Z + 4.3);
-camera.lookAt(0, 0, STRIKE_Z - 8.5);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
+camera.position.set(0, CAM.y, CAM.z);
+camera.lookAt(0, 0, (STRIKE_Z + FAR_Z) / 2);  // frame strike -> far end of the board
 
 scene.add(new THREE.AmbientLight(0x9fb4e0, 0.65));
 const key = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -256,8 +261,8 @@ function tick() {
   if (noteGroup) {
     for (const o of noteGroup.children) {
       const n = o.userData.note; if (!n) continue;
-      const dz = n.t - c;                    // seconds until hit
-      o.visible = dz < 0.3 && dz > -LOOKAHEAD;
+      const dz = n.t - c;                    // seconds until hit (>0 = upcoming)
+      o.visible = dz < LOOKAHEAD && dz > -PAST;  // show the whole approach, not just imminent
     }
   }
   el.clock.textContent = c.toFixed(1) + 's';
