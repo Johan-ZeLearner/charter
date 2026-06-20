@@ -17,3 +17,13 @@ tests/fixtures/*.mid
 # Generated song folders / scratch output
 /out/
 *.opus
+
+# Source audio — NEVER commit audio inputs (copyright + repo bloat)
+*.mp3
+*.wav
+*.ogg
+*.flac
+/mp3/
+
+# macOS
+.DS_Store
