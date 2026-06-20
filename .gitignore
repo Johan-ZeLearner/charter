@@ -32,3 +32,7 @@ tests/fixtures/*.mid
 /model/
 *.th
 *.ckpt
+
+# Playwright debug artifacts / screenshots
+.playwright-mcp/
+studio-*.jpeg

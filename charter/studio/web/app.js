@@ -26,6 +26,9 @@ const el = {
   subdivisions:$('subdivisions'), dynamics:$('dynamics'), double_kick:$('double_kick'),
   tom_split:$('tom_split'), repreview:$('repreview'), play:$('play'), overlay:$('overlay'),
   clock:$('clock'), status:$('status'),
+  // tuning sliders — referenced as el[k] in the SLIDERS loop, so they MUST be here
+  onset_delta:$('onset_delta'), kick_low_ratio:$('kick_low_ratio'),
+  snare_mid_ratio:$('snare_mid_ratio'), hat_vhigh_ratio:$('hat_vhigh_ratio'),
 };
 const SLIDERS = ['onset_delta', 'kick_low_ratio', 'snare_mid_ratio', 'hat_vhigh_ratio'];
 const SLIDER_OUT = { onset_delta:'onsetOut', kick_low_ratio:'kickOut', snare_mid_ratio:'snareOut', hat_vhigh_ratio:'hatOut' };
