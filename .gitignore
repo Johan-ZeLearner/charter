@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Node — node_modules is reproducible from the committed package-lock.json
+node_modules/
+
+# Generated test fixtures (regenerate with `python -m tests.fixtures.make_fixtures`)
+tests/fixtures/*.mid
+
+# Generated song folders / scratch output
+/out/
+*.opus

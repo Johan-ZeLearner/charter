@@ -1,0 +1,10 @@
+{
+  "name": "charter-validation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Node>=24 scan-chart subprocess wrapper — the canonical Clone Hero acceptance gate.",
+  "engines": { "node": ">=24" },
+  "bin": { "charter-validate": "./validate.mjs" },
+  "dependencies": { "scan-chart": "^8.0.1" }
+}
