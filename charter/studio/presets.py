@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..audio.adt import BaselineConfig
+from ..audio.drumsep import DrumSepConfig, drumsep_available
 from ..audio.separation import (
     PassthroughSeparator,
     PercussiveSeparator,
@@ -25,18 +26,20 @@ from ..mapping import MapConfig
 
 # The full knob set the UI drives. Defaults reproduce the current baseline.
 DEFAULTS: dict[str, Any] = {
-    "separation": "hpss",        # hpss | passthrough | demucs | auto
+    "engine": "baseline",        # baseline | drumsep (per-drum-stem, quality)
+    "separation": "hpss",        # hpss | passthrough | demucs | auto (baseline engine)
     "onset_delta": 0.06,         # peak-pick threshold (higher = fewer onsets)
     "onset_min_gap_s": 0.045,    # min spacing between onsets (higher = fewer)
     "kick_low_ratio": 0.28,      # low-band fraction -> kick (raise to reject bass)
     "snare_mid_ratio": 0.18,     # mid-band fraction -> snare
     "hat_vhigh_ratio": 0.45,     # very-high-band fraction -> hi-hat (lower to find hats)
     "hat_mid_max": 0.30,         # hat only if mid below this
+    "tom_split": True,           # drumsep: split toms blue/green by pitch
     "subdivisions": 4,           # grid: 2=8th, 4=16th, 3=8th-triplet, 6=16th-triplet
     "dynamics": False,           # emit ghost/accent modifiers
     "double_kick": False,        # infer 2x kick from close kicks
     "double_kick_gap_s": 0.140,  # gap under which a kick is marked 2x
-    "device": None,              # demucs device override (mps/cuda/cpu)
+    "device": None,              # demucs/drumsep device override (mps/cuda/cpu)
 }
 
 # Named starting points. Only the keys that differ from DEFAULTS are listed.
@@ -106,10 +109,14 @@ def resolve_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
     out["subdivisions"] = max(1, int(out["subdivisions"]))
     out["dynamics"] = bool(out["dynamics"])
     out["double_kick"] = bool(out["double_kick"])
+    out["tom_split"] = bool(out["tom_split"])
     for f in ("onset_delta", "onset_min_gap_s", "kick_low_ratio", "snare_mid_ratio",
               "hat_vhigh_ratio", "hat_mid_max", "double_kick_gap_s"):
         out[f] = float(out[f])
+    if out["engine"] not in ("baseline", "drumsep"):
+        out["engine"] = "baseline"
     out["_genre"] = genre or "Default"
+    out["_drumsep_available"] = drumsep_available()
     return out
 
 
@@ -122,9 +129,45 @@ def _make_separator(name: str, device: str | None) -> Separator:
     return choose_separator(prefer=name, device=device)
 
 
-def build_configs(settings: dict[str, Any]) -> tuple[Separator, BaselineConfig, MapConfig, int]:
-    """Translate resolved settings into (separator, BaselineConfig, MapConfig, subdivisions)."""
+def build_map_config(settings: dict[str, Any]) -> MapConfig:
+    """MapConfig from settings (dynamics + 2x-kick gating), shared by both engines."""
     s = settings
+    mc = MapConfig()
+    if not s["dynamics"]:
+        # Push the gates out of range so every hit stays NORMAL (no ghost/accent).
+        mc.ghost_max_velocity = 0
+        mc.accent_min_velocity = 128
+    mc.double_kick_gap_seconds = s["double_kick_gap_s"] if s["double_kick"] else 0.0
+    return mc
+
+
+def build_engine(settings: dict[str, Any]):
+    """Translate settings into (separator, transcriber, MapConfig, subdivisions).
+
+    ``drumsep`` engine does its own separation from the raw mix, so it pairs with
+    a passthrough separator; it falls back to the baseline (with a name change the
+    diagnostics surface) if the weights/demucs aren't installed.
+    """
+    s = settings
+    mc = build_map_config(settings)
+    subdiv = int(s["subdivisions"])
+
+    if s["engine"] == "drumsep" and drumsep_available():
+        from ..audio.drumsep import DrumSepConfig, DrumSepTranscriber
+
+        dcfg = DrumSepConfig(
+            onset_delta=s["onset_delta"],
+            onset_min_gap_s=s["onset_min_gap_s"],
+            tom_split=s["tom_split"],
+            device=s.get("device"),
+        )
+        try:
+            return PassthroughSeparator(), DrumSepTranscriber(dcfg), mc, subdiv
+        except Exception:  # weights vanished mid-session -> fall through to baseline
+            pass
+
+    from ..audio.adt import BaselineDrumTranscriber
+
     bc = BaselineConfig(
         kick_low_ratio=s["kick_low_ratio"],
         snare_mid_ratio=s["snare_mid_ratio"],
@@ -133,14 +176,5 @@ def build_configs(settings: dict[str, Any]) -> tuple[Separator, BaselineConfig, 
         onset_delta=s["onset_delta"],
         onset_min_gap_s=s["onset_min_gap_s"],
     )
-    mc = MapConfig()
-    if not s["dynamics"]:
-        # Push the gates out of range so every hit stays NORMAL (no ghost/accent).
-        mc.ghost_max_velocity = 0
-        mc.accent_min_velocity = 128
-    if not s["double_kick"]:
-        mc.double_kick_gap_seconds = 0.0  # gap < 0 is never true -> no 2x
-    else:
-        mc.double_kick_gap_seconds = s["double_kick_gap_s"]
     sep = _make_separator(s["separation"], s.get("device"))
-    return sep, bc, mc, int(s["subdivisions"])
+    return sep, BaselineDrumTranscriber(bc), mc, subdiv

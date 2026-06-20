@@ -27,3 +27,8 @@ tests/fixtures/*.mid
 
 # macOS
 .DS_Store
+
+# Model weights (downloaded; never committed — fetch with the studio/CLI helper)
+/model/
+*.th
+*.ckpt

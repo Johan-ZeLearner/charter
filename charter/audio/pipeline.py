@@ -57,8 +57,16 @@ def transcribe_buffer(
 
     with _stage(f"Stage 1 separation [{separator.name}]"):
         drums = separator.separate(audio)
+    # Beat tracking always wants a percussive signal. A self-separating
+    # transcriber (e.g. drumsep) pairs with a passthrough separator, so `drums`
+    # is the raw mix there — emphasize percussion via HPSS just for the grid.
     with _stage(f"Stage 3 beat/tempo [{beat_tracker.name}]"):
-        grid = beat_tracker.track(drums)
+        if separator.name == "passthrough":
+            from . import dsp
+            beat_sig = AudioBuffer(dsp.hpss_percussive(audio.samples, audio.sr), audio.sr)
+        else:
+            beat_sig = drums
+        grid = beat_tracker.track(beat_sig)
     log.info("    ~%.1f BPM, %d beats", grid.bpm, len(grid.beat_times))
     with _stage(f"Stage 4 transcription [{transcriber.name}]"):
         onsets = transcriber.transcribe(drums)

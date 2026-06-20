@@ -55,13 +55,32 @@ def _cmd_midi2chart(args: argparse.Namespace) -> int:
 def _cmd_mp3tochart(args: argparse.Namespace) -> int:
     import logging
 
+    from .audio.adt import choose_transcriber
     from .audio.pipeline import mp3_to_chart_folder
-    from .audio.separation import choose_separator
+    from .audio.separation import PassthroughSeparator, choose_separator
 
     if not args.quiet:
         logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
 
+    transcriber = None
     separator = choose_separator(args.sep, device=args.device)
+    if args.engine == "drumsep":
+        transcriber = choose_transcriber("drumsep")
+        if transcriber.name == "drumsep":
+            # drumsep self-separates from the raw mix — don't pre-separate.
+            separator = PassthroughSeparator()
+            print(
+                "note: using DrumSep (per-drum stems) — separating a full song takes "
+                "minutes on MPS. Tip: add `--max-seconds 30` to test on a clip first.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "note: --engine drumsep requested but weights/demucs are missing — "
+                "running the baseline. Set up weights with: "
+                "`python -m charter.cli download-weights`.",
+                file=sys.stderr,
+            )
     if separator.name == "demucs":
         print(
             "note: using Demucs — the first run downloads ~80 MB of model weights, "
@@ -79,6 +98,7 @@ def _cmd_mp3tochart(args: argparse.Namespace) -> int:
         encode_audio=not args.no_audio,
         max_seconds=args.max_seconds,
         separator=separator,
+        transcriber=transcriber,
     )
     print(
         f"wrote {folder}  [{diag.gate}]  "
@@ -110,6 +130,18 @@ def _cmd_mp3tochart(args: argparse.Namespace) -> int:
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     return _validate(args.folder)
+
+
+def _cmd_download_weights(args: argparse.Namespace) -> int:
+    from .audio.drumsep import download_weights
+
+    try:
+        path = download_weights(args.dest)
+    except RuntimeError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(f"drumsep weights ready: {path}\nUse with: mp3tochart ... --engine drumsep")
+    return 0
 
 
 def _validate(folder: str | Path) -> int:
@@ -157,9 +189,11 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--name", default=None)
     a.add_argument("--artist", default=None)
     a.add_argument("--charter", default="charter AI")
+    a.add_argument("--engine", default="baseline", choices=["baseline", "drumsep"],
+                   help="ADT engine: baseline band-energy (fast) or drumsep per-drum stems (quality)")
     a.add_argument("--sep", default="auto", choices=["auto", "demucs", "hpss", "passthrough"],
-                   help="drum separator (auto = Demucs if installed, else HPSS)")
-    a.add_argument("--device", default=None, help="demucs device: mps / cuda / cpu (default auto)")
+                   help="drum separator for the baseline engine (auto = Demucs if installed, else HPSS)")
+    a.add_argument("--device", default=None, help="demucs/drumsep device: mps / cuda / cpu (default auto)")
     a.add_argument("--max-seconds", type=float, default=None,
                    help="only process the first N seconds (fast test on a clip)")
     a.add_argument("--no-audio", action="store_true", help="skip song.opus encoding")
@@ -170,6 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser("validate", help="run the scan-chart gate on a song folder")
     v.add_argument("folder", help="song folder to validate")
     v.set_defaults(func=_cmd_validate)
+
+    d = sub.add_parser("download-weights",
+                       help="download the DrumSep per-drum model weights (~167 MB)")
+    d.add_argument("--dest", default=None,
+                   help="destination .th path (default ~/.cache/charter/drumsep.th)")
+    d.set_defaults(func=_cmd_download_weights)
     return p
 
 

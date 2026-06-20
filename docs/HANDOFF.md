@@ -36,11 +36,16 @@ The chart now loads, but on real music it is **not playable-as-the-song**. Root 
 
 This is a **fundamental** limit of band-energy classification — it cannot be tuned into a chart that matches the song.
 
-### The real lever (matches the env)
-The environment is **torch-native**: `.venv` has **torch 2.12 + torchaudio 2.11 + MPS (M1 GPU)**, demucs 4.0.1 — but **NO TensorFlow / librosa / madmom / adtof / omnizart**. So the docs' ADTOF (TensorFlow) engine is the *wrong first pick* on this machine. Prefer a **torch-native per-drum-stem approach** (the docs' Phase-7 DrumSep/LarsNet arbiter): split the drum signal into kick / snare / hi-hat / toms / cymbals stems, then run onset detection **per stem** — classification becomes "which stem fired," which directly fixes all four failure modes above and unlocks toms + ride-vs-crash (non-empty charts). See [05-drum-transcription.md](./05-drum-transcription.md) and [04-source-separation.md](./04-source-separation.md).
+### The real lever — ✅ BUILT (2026-06-20): the DrumSep per-drum engine
+The environment is **torch-native**: `.venv` has **torch 2.12 + torchaudio 2.11 + MPS (M1 GPU)**, demucs 4.0.1 — but **NO TensorFlow / librosa / madmom / adtof / omnizart**. So the docs' ADTOF (TensorFlow) engine is the *wrong first pick*. We shipped the **torch-native per-drum-stem approach** instead:
 
-### Cheap interim hardening (no new deps, partial)
-If a quick win is wanted before the model lands: lower the hi-hat `vhigh` gate so a groove returns, gate kicks on transient sharpness (not raw low-band energy) to reject bass, disable the ghost/2×-kick floods by default. This makes the chart *recognizable*, not *good*.
+- **Model:** `inagoy/drumsep` — a Hybrid Demucs checkpoint that splits into **4 stems: kick / snare / cymbals / toms** (Spanish source names `bombo/redoblante/platillos/toms`). Reuses the **already-installed demucs** (no new framework). Weights = one ~167 MB Google-Drive download (gdrive id `1-Dm666ScPkg8Gt2-lK3Ua0xOudWHZBGC`). Runs on **MPS** (~8–10 s per 12 s window).
+- **Engine:** `charter/audio/drumsep.py` → `DrumSepTranscriber`. Separates, then runs **onset detection per stem** (reusing `dsp.onset_envelope`/`peak_pick`), so "which drum" = "which stem fired." Maps kick→36, snare→38, cymbals→**42 yellow hi-hat cymbal** (owns yellow exclusively), toms→**blue/green by spectral centroid** (never yellow, so they can't collide with the hi-hat and force a fake blue crash).
+- **Two torch-2.12 gotchas solved (don't re-hit these):** (1) gdown dropped the `--id` flag — use positional id; (2) demucs 4.0.1's `load_model` calls `torch.load(weights_only=True)` (the torch≥2.6 default), which rejects the pickled `HDemucs` class — so we `torch.load(..., weights_only=False)` ourselves (trusted checkpoint) and hand the dict to `load_model`.
+- **Result on a clay window:** baseline = 22 notes, 0 cymbals (snare mush); **drumsep = ~62 notes with kick + snare + ~17 yellow hi-hats + blue/green toms** — a real kit. The two worst failures (bass-as-kick, no-hi-hat) are fixed because the kick stem has no bassline and the cymbals stem carries the groove.
+- **Wired everywhere:** `choose_transcriber("drumsep")` (graceful fallback to baseline if weights/demucs absent); studio **Engine** dropdown (Baseline fast / DrumSep quality) + tom-split toggle + availability hint; CLI `mp3tochart --engine drumsep` and `charter download-weights`. Pipeline now beat-tracks on an HPSS signal when the separator is passthrough (drumsep self-separates from the raw mix), so the tempo grid stays good.
+
+**Honest limits (next levers):** 4 stems means hi-hat shares the cymbals stem with crash/ride — v1 maps the whole cymbals stem to a yellow hi-hat (safe, no blue/green crash calls). Ride-vs-crash + open/closed hat is still the blue-lane frontier. A **5-stem model (LarsNet)** would separate hi-hat from cymbals, but its env pins python 3.11 / torch 2.1 / numpy 1.26 (conflicts with this env) + CC BY-NC — documented upgrade, not v1. drumsep weights are **gitignored** (`/model/`, `*.th`) — fetch with `charter download-weights`.
 
 ---
 

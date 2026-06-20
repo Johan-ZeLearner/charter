@@ -11,12 +11,15 @@ Output is GM-drum onsets with velocity, consumed by quantize -> Stage-6 mapping.
 from __future__ import annotations
 
 import importlib.util
+import logging
 from dataclasses import dataclass
 
 import numpy as np
 
 from . import dsp
 from .interfaces import AudioBuffer, DrumOnset, DrumTranscriber
+
+log = logging.getLogger("charter.audio")
 
 # GM percussion notes for the 3-class backbone (map cleanly in Stage 6).
 GM_KICK = 36
@@ -107,6 +110,27 @@ def adtof_available() -> bool:
     return importlib.util.find_spec("adtof") is not None
 
 
-def choose_transcriber(prefer: str = "auto") -> DrumTranscriber:
-    # ADTOF is left unwired for now (heavy TF dependency); default to baseline.
-    return BaselineDrumTranscriber()
+def choose_transcriber(prefer: str = "auto", *, config=None) -> DrumTranscriber:
+    """Pick a transcriber.
+
+    ``drumsep`` selects the per-drum-stem ADT (the quality engine) when its
+    weights + demucs are present, else logs and falls back to the band-energy
+    baseline. ``baseline`` / ``auto`` use the baseline (the always-available
+    floor — ADTOF stays unwired, heavy TF dependency).
+    """
+    if prefer == "drumsep":
+        from .drumsep import DrumSepConfig, DrumSepTranscriber, drumsep_available
+
+        if drumsep_available():
+            cfg = config if isinstance(config, DrumSepConfig) else None
+            try:
+                return DrumSepTranscriber(cfg)
+            except Exception as exc:  # pragma: no cover
+                log.warning("drumsep unavailable (%s) — falling back to baseline", exc)
+        else:
+            log.warning(
+                "drumsep weights/demucs not found — falling back to baseline. "
+                "Install: pip install demucs gdown, then download the model."
+            )
+    bc = config if isinstance(config, BaselineConfig) else None
+    return BaselineDrumTranscriber(bc)

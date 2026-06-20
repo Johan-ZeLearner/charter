@@ -13,13 +13,13 @@ iteration. The Three.js highway scene ports almost 1:1 into React-Three-Fiber.
 
 from __future__ import annotations
 
-from .presets import DEFAULTS, PRESETS, build_configs, resolve_settings
+from .presets import DEFAULTS, PRESETS, build_engine, resolve_settings
 from .service import run_preview, song_meta
 
 __all__ = [
     "DEFAULTS",
     "PRESETS",
-    "build_configs",
+    "build_engine",
     "resolve_settings",
     "run_preview",
     "song_meta",

@@ -16,12 +16,13 @@ from typing import Any
 
 import numpy as np
 
+from ..audio import dsp
 from ..audio.beats import choose_beat_tracker
 from ..audio.ingest import decode_audio, read_tags
+from ..audio.interfaces import AudioBuffer
 from ..audio.quantize import build_tempo_map, quantize_onsets
-from ..audio.adt import BaselineDrumTranscriber
 from ..mapping import map_events
-from .presets import build_configs, resolve_settings
+from .presets import build_engine, resolve_settings
 
 
 def song_meta(path: str | Path) -> dict[str, Any]:
@@ -44,13 +45,21 @@ def run_preview(
     settings = resolve_settings(raw_settings)
     audio = decode_audio(path, start_seconds=start_s, max_seconds=length_s)
 
-    sep, bcfg, mcfg, subdiv = build_configs(settings)
-    transcriber = BaselineDrumTranscriber(bcfg)
+    sep, transcriber, mcfg, subdiv = build_engine(settings)
     beat_tracker = choose_beat_tracker()
+    is_drumsep = transcriber.name == "drumsep"
 
     drums = sep.separate(audio)
-    grid = beat_tracker.track(drums)
-    onsets = transcriber.transcribe(drums)
+    # Beat tracking wants a percussive signal. The baseline's separator already
+    # gives one; drumsep pairs with passthrough (raw mix), so emphasize
+    # percussion via HPSS just for the beat grid.
+    if is_drumsep:
+        beat_sig = AudioBuffer(dsp.hpss_percussive(audio.samples, audio.sr), audio.sr)
+    else:
+        beat_sig = drums
+    grid = beat_tracker.track(beat_sig)
+    # drumsep does its own separation from the raw mix; the baseline reads `drums`.
+    onsets = transcriber.transcribe(audio if is_drumsep else drums)
     tempo_map = build_tempo_map(grid)
     events = quantize_onsets(onsets, grid, subdivisions=subdiv)
     mapped = map_events(events, tempo_map, mcfg)
@@ -82,6 +91,8 @@ def run_preview(
         "notes": notes,
         "settings": {k: v for k, v in settings.items() if not k.startswith("_")},
         "genre": settings.get("_genre", "Default"),
+        "engine": transcriber.name,  # actual engine that ran (may differ if drumsep fell back)
+        "drumsepAvailable": settings.get("_drumsep_available", False),
         "diagnostics": {
             "drum_rms": round(float(drums.rms()), 5),
             "gate": _gate(float(drums.rms())),

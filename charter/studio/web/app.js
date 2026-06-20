@@ -21,9 +21,10 @@ const $ = (id) => document.getElementById(id);
 const el = {
   panel:$('panel'), highway:$('highway'), songinfo:$('songinfo'), diag:$('diag'),
   start:$('start'), startOut:$('startOut'), length:$('length'), lenOut:$('lenOut'),
-  shuffle:$('shuffle'), genre:$('genre'), separation:$('separation'),
+  shuffle:$('shuffle'), engine:$('engine'), engineHint:$('engineHint'),
+  baselineGroup:$('baselineGroup'), genre:$('genre'), separation:$('separation'),
   subdivisions:$('subdivisions'), dynamics:$('dynamics'), double_kick:$('double_kick'),
-  repreview:$('repreview'), play:$('play'), overlay:$('overlay'),
+  tom_split:$('tom_split'), repreview:$('repreview'), play:$('play'), overlay:$('overlay'),
   clock:$('clock'), status:$('status'),
 };
 const SLIDERS = ['onset_delta', 'kick_low_ratio', 'snare_mid_ratio', 'hat_vhigh_ratio'];
@@ -267,27 +268,51 @@ function fmtTime(s) { const m = Math.floor(s / 60); return `${m}:${String(Math.f
 
 function syncControls() {
   if (!settings) return;
+  el.engine.value = settings.engine || 'baseline';
   el.separation.value = settings.separation;
   el.subdivisions.value = String(settings.subdivisions);
   el.dynamics.checked = !!settings.dynamics;
   el.double_kick.checked = !!settings.double_kick;
+  el.tom_split.checked = !!settings.tom_split;
   for (const k of SLIDERS) { el[k].value = settings[k]; $(SLIDER_OUT[k]).textContent = (+settings[k]).toFixed(2); }
+  updateEngineUI();
 }
 function readControls() {
   const s = { ...settings };
+  s.engine = el.engine.value;
   s.separation = el.separation.value;
   s.subdivisions = +el.subdivisions.value;
   s.dynamics = el.dynamics.checked;
   s.double_kick = el.double_kick.checked;
+  s.tom_split = el.tom_split.checked;
   for (const k of SLIDERS) s[k] = +el[k].value;
   return s;
+}
+
+// The DrumSep engine self-separates, so the band-energy "Separation"/genre knobs
+// don't apply; dim them and flag if the weights aren't installed.
+function updateEngineUI() {
+  const drumsep = el.engine.value === 'drumsep';
+  el.baselineGroup.style.opacity = drumsep ? 0.4 : 1;
+  el.separation.disabled = drumsep;
+  if (drumsep && preview && preview.drumsepAvailable === false) {
+    el.engineHint.innerHTML =
+      'DrumSep weights not found — runs as <b>baseline</b>. Install:<br>' +
+      '<code>pip install demucs gdown</code> then download the model to ' +
+      '<code>model/drumsep.th</code>.';
+  } else if (drumsep) {
+    el.engineHint.innerHTML = 'Per-drum-stem separation — slower (~10 s / window), much truer lanes.';
+  } else {
+    el.engineHint.textContent = '';
+  }
 }
 
 let busy = false;
 async function doPreview(payload) {
   if (busy) return; busy = true;
   el.panel.classList.add('busy'); el.status.classList.remove('err');
-  el.status.textContent = 'transcribing…';
+  el.status.textContent = (payload.engine === 'drumsep' || el.engine.value === 'drumsep')
+    ? 'separating drums… (~10s)' : 'transcribing…';
   const start = +el.start.value, length = +el.length.value;
   try {
     const r = await fetch('/api/preview', {
@@ -299,14 +324,17 @@ async function doPreview(payload) {
     preview = data; settings = data.settings; syncControls();
     buildScene(data);
     audio.pause(); audio.src = data.audioUrl; audio.currentTime = 0; resetFired();
-    showDiag(data); el.status.textContent = `${data.notes.length} notes · ${data.bpm} bpm`;
+    showDiag(data);
+    const eng = data.engine === 'drumsep' ? 'drumsep' : 'baseline';
+    el.status.textContent = `${eng} · ${data.notes.length} notes · ${data.bpm} bpm`;
   } catch (e) {
     el.status.textContent = 'error: ' + e.message; el.status.classList.add('err');
   } finally {
     busy = false; el.panel.classList.remove('busy');
   }
 }
-const previewGenre = (g) => doPreview({ genre:g });
+// Genre resets the band-energy knobs to a preset, but keep the chosen engine.
+const previewGenre = (g) => doPreview({ genre:g, engine: el.engine.value });
 const previewTuned = () => doPreview(readControls());
 
 function showDiag(d) {
@@ -315,6 +343,7 @@ function showDiag(d) {
   const cym = d.notes.filter((n) => n.cymbal).length;
   const gl = g.gate.toLowerCase();
   el.diag.innerHTML =
+    `engine <b>${d.engine}</b>\n` +
     `gate <span class="${gl}">${g.gate}</span>  rms ${g.drum_rms}\n` +
     `sep <b>${g.separator}</b>  ·  onsets <b>${g.onsets}</b>\n` +
     `notes <b>${g.notes}</b>  cymbals <b>${cym}</b>\n` +
@@ -332,11 +361,13 @@ el.shuffle.addEventListener('click', () => {
   el.start.value = (Math.random() * max).toFixed(1);
   el.startOut.textContent = fmtTime(+el.start.value); previewTuned();
 });
+el.engine.addEventListener('change', () => { updateEngineUI(); previewTuned(); });
 el.genre.addEventListener('change', () => previewGenre(el.genre.value));
 el.separation.addEventListener('change', previewTuned);
 el.subdivisions.addEventListener('change', previewTuned);
 el.dynamics.addEventListener('change', previewTuned);
 el.double_kick.addEventListener('change', previewTuned);
+el.tom_split.addEventListener('change', previewTuned);
 for (const k of SLIDERS) {
   el[k].addEventListener('input', () => { $(SLIDER_OUT[k]).textContent = (+el[k].value).toFixed(2); });
   el[k].addEventListener('change', previewTuned);

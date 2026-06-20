@@ -29,6 +29,17 @@
       </section>
 
       <section class="group">
+        <h3>Engine</h3>
+        <label>ADT engine
+          <select id="engine">
+            <option value="baseline" selected>Baseline — band energy (fast)</option>
+            <option value="drumsep">DrumSep — per-drum stems (quality)</option>
+          </select>
+        </label>
+        <div id="engineHint" class="hint"></div>
+      </section>
+
+      <section class="group" id="baselineGroup">
         <h3>Music type</h3>
         <label>Genre preset
           <select id="genre">
@@ -75,6 +86,7 @@
         <div class="row">
           <label class="chk"><input id="dynamics" type="checkbox" /> dynamics</label>
           <label class="chk"><input id="double_kick" type="checkbox" /> 2× kick</label>
+          <label class="chk"><input id="tom_split" type="checkbox" checked /> tom split</label>
         </div>
       </section>
 
