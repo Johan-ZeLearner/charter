@@ -3,12 +3,15 @@ name = "charter"
 version = "0.1.0"
 description = "mp3 -> playable Clone Hero drums. Symbolic backend (Stages 6-8): GM-drum MIDI -> 4-lane Pro .chart, validated against Clone Hero's parser via scan-chart."
 requires-python = ">=3.10"
-# The symbolic backend has ZERO runtime dependencies (own SMF reader/writer).
-# The audio frontend (Phase 3+) will add demucs / adtof / beat-this etc.
-dependencies = []
+# Symbolic backend (charter.drumnote / charter.mapping) is import-free of these.
+# Audio frontend (charter.audio) needs numpy/scipy + the system FFmpeg binary.
+dependencies = ["numpy>=1.24", "scipy>=1.10"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+# Optional SOTA adapters, used automatically if importable (heavy / platform-
+# specific — install in a venv, not your base env). See docs/04, docs/05, docs/06.
+sota = ["demucs", "beat-this", "adtof"]
 
 [project.scripts]
 charter = "charter.cli:main"

@@ -52,6 +52,34 @@ def _cmd_midi2chart(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_mp3tochart(args: argparse.Namespace) -> int:
+    from .audio.pipeline import mp3_to_chart_folder
+
+    folder, diag = mp3_to_chart_folder(
+        args.input,
+        args.out,
+        name=args.name,
+        artist=args.artist,
+        charter=args.charter,
+        encode_audio=not args.no_audio,
+    )
+    print(
+        f"wrote {folder}  [{diag.gate}]  "
+        f"sep={diag.separator} beats={diag.beat_tracker} adt={diag.transcriber}"
+    )
+    print(
+        f"  ~{diag.bpm:.1f} BPM, {diag.beats} beats, {diag.onsets} onsets "
+        f"-> {diag.notes} notes  (drum RMS {diag.drum_rms:.4f})"
+    )
+    if diag.gate == "REFUSE":
+        print("  REFUSE: drums too quiet/buried — output is likely unusable.")
+    for w in diag.warnings[:8]:
+        print(f"  - {w}")
+    if args.validate:
+        return _validate(folder)
+    return 0
+
+
 def _cmd_validate(args: argparse.Namespace) -> int:
     return _validate(args.folder)
 
@@ -94,6 +122,16 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--audio", default=None, help="optional audio file to copy as song.<ext>")
     m.add_argument("--validate", action="store_true", help="run scan-chart after writing")
     m.set_defaults(func=_cmd_midi2chart)
+
+    a = sub.add_parser("mp3tochart", help="audio file -> playable Clone Hero song folder")
+    a.add_argument("input", help="input audio file (mp3/wav/flac/...)")
+    a.add_argument("out", help="output song folder")
+    a.add_argument("--name", default=None)
+    a.add_argument("--artist", default=None)
+    a.add_argument("--charter", default="charter AI")
+    a.add_argument("--no-audio", action="store_true", help="skip song.opus encoding")
+    a.add_argument("--validate", action="store_true", help="run scan-chart after writing")
+    a.set_defaults(func=_cmd_mp3tochart)
 
     v = sub.add_parser("validate", help="run the scan-chart gate on a song folder")
     v.add_argument("folder", help="song folder to validate")

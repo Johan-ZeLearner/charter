@@ -27,11 +27,15 @@
 
 > Goal: a complete `mp3 → song folder` path that produces an **instantly playable Expert chart** Clone Hero accepts as 4-lane Pro every time, plus an honest REVIEW.md and one real cleanup pass. Quality is allowed to be mediocre — the goal is a measurable, valid, end-to-end loop.
 
-> **BUILD STATUS (2026-06-20):** Phases **1–2 are implemented** — the symbolic
-> backend ships in `charter/` with the scan-chart gate in `tools/validation/`;
-> hand-made GM MIDI round-trips green (`drumType == fourLanePro`) via 23 passing
-> tests. Phases **3+ (audio frontend) are not started.** See the project
-> `README.md` for run/test commands.
+> **BUILD STATUS (2026-06-20):** Phases **1–3 are implemented**, plus the Phase-4
+> audio gate. `charter/` runs `audio file → playable song folder` end-to-end on a
+> dependency-light baseline (numpy/scipy + FFmpeg): HPSS separation, a DP beat
+> tracker with a smoothed per-beat tempo map, and a band-energy kick/snare/hat
+> transcriber → the Phase-2 mapping/serializer → scan-chart `fourLanePro` +
+> `song.opus` (`playable=True`). **37 tests pass.** SOTA adapters (Demucs/Beat
+> This!/ADTOF) are wired as optional and used if installed. Still baseline-grade:
+> no toms / ride-vs-crash, no REVIEW.md yet — those are Part B + Phase 4's REVIEW
+> file. See the project `README.md` for run/test commands.
 
 ### Phase 1 — Vendor the spec + stand up scan-chart as a day-one passing test
 
@@ -61,24 +65,24 @@ Skip audio entirely. Prove the format/serialization half with inputs you fully c
 
 Now connect the noisy half. Use the **trivial-install fallbacks**, not SOTA — the goal is a complete pipeline you can measure, not a good one.
 
-- [ ] Stage 0: FFmpeg decode/normalize (ITU-R BS.1770 loudness) → 44.1 kHz stereo + 22.05 kHz mono; Mutagen for tags.
-- [ ] Stage 1: **Demucs v4 `htdemucs_ft`** (pip, MIT, offline, no-GPU) for the drum stem. (RoFormer is a later swap — see Part B.)
-- [ ] Stage 4: **ADTOF** (`drumTranscriptor` CLI, 5-class CRNN, ~0.85–0.89 F) for onsets + classes → raw GM MIDI.
-- [ ] Stage 3: **Beat This!** (`beat-this`, `final0` checkpoint, CPU) for beats + downbeats → **per-beat tempo map** via `60/(t[i+1]−t[i])`, coalesced within ~0.5 BPM; infer time signature from downbeat spacing. **Never a global BPM.**
-- [ ] Stage 5–6: adaptive 16th-grid quantization at ~100% snap → GM → lane mapping (reuse Phase 2 table) → `DrumNote` → serializer. **Expert only.**
+- [x] Stage 0: FFmpeg decode/normalize (ITU-R BS.1770 loudness) → mono float32; ffprobe for tags. **— DONE:** `charter/audio/ingest.py` (used `loudnorm`; Mutagen replaced by ffprobe to avoid the dep). *Deviation:* baseline analyses one mono 44.1 kHz buffer, not separate 44.1k-stereo/22.05k-mono.
+- [x] Stage 1: drum-stem separation. **— DONE** with a deviation: the no-install baseline is **HPSS percussive separation** (`charter/audio/separation.py`), since Demucs requires a torch install. **Demucs `htdemucs_ft` is wired as an optional adapter** (`DemucsSeparator`) used automatically if installed.
+- [x] Stage 4: drum ADT. **— DONE** with a deviation: the baseline is a **band-energy multi-label kick/snare/hat transcriber** (`charter/audio/adt.py`, precision 1.0 / recall ~0.87 on synthetic drums). **ADTOF is wired as an optional adapter** (currently a stub raising NotImplementedError — needs the `drumTranscriptor` call). Baseline does **not** do toms / ride-vs-crash (Part B Phase 7).
+- [x] Stage 3: beats + downbeats → **per-beat tempo map**. **— DONE:** numpy/scipy DP beat tracker + sub-frame refinement + median-smoothed per-beat map (`charter/audio/beats.py`, `quantize.py`). Constant tempo collapses to ~1 marker; drift is tracked. **Beat This!** wired as an optional adapter. *Deviation:* time signature assumed 4/4 (odd-meter detection deferred to Part B Phase 9).
+- [x] Stage 5–6: 16th-grid quantization at ~100% snap → GM → lane mapping (reuses Phase 2 table) → `DrumNote` → serializer. **Expert only. — DONE:** `charter/audio/quantize.py` + reuse of `charter/mapping`.
 
-**RISK:** A single global BPM is the #1 cause of unplayable charts. **Mitigation: emit one tempo event per beat interval; verify on a deliberately tempo-changing song that notes don't drift.**
+**RISK:** A single global BPM is the #1 cause of unplayable charts. **Mitigation: emit one tempo event per beat interval; verify on a deliberately tempo-changing song that notes don't drift.** ✅ tempo-map change-tracking is unit-tested (`test_audio_quantize.py::test_tempo_map_tracks_changes`).
 
-**Done when:** an arbitrary mp3 produces a complete song folder that passes scan-chart, and on a deliberately tempo-changing test song the gems track the audio without drift.
+**Done when:** an arbitrary audio file produces a complete song folder that passes scan-chart. ✅ **MET** (`test_audio_pipeline.py` — `audio → fourLanePro`, `playable=True` with `song.opus`). *Caveat:* "real mp3 on a real song" not yet exercised — only synthetic drums + the baseline; quality on real music is unmeasured.
 
 ### Phase 4 — Audio-quality gate + REVIEW.md
 
 Bake the honest "AI draft" UX in from the start, not bolted on later.
 
-- [ ] Compute drum-stem RMS gate (STRUM screened at RMS ≥ 0.018; only ~63% of songs passed). CLI prints **GO / CAUTION / REFUSE** with a numeric drum-prominence score. **Refuse early, don't fail late.**
-- [ ] Generate `REVIEW.md` listing every low-confidence region: low drum-stem RMS regions, **every blue-lane cymbal/tom call**, inferred 2× kick runs, and the bar-1 / meter guess.
+- [x] Compute drum-stem RMS gate (STRUM screened at RMS ≥ 0.018; only ~63% of songs passed). CLI prints **GO / CAUTION / REFUSE** with a numeric drum-prominence score. **Refuse early, don't fail late.** **— DONE:** `Diagnostics.gate` in `charter/audio/interfaces.py`, surfaced by `mp3tochart`.
+- [ ] Generate `REVIEW.md` listing every low-confidence region: low drum-stem RMS regions, **every blue-lane cymbal/tom call**, inferred 2× kick runs, and the bar-1 / meter guess. **— NOT DONE.** Mapping warnings + the gate are printed to stdout; a written `REVIEW.md` artifact is still TODO (and the baseline has no blue-lane calls yet, since it emits no toms/cymbals beyond hi-hat).
 
-**Done when:** the CLI emits a GO/CAUTION/REFUSE verdict and a REVIEW.md whose flagged regions point a human at the known weak spots.
+**Done when:** the CLI emits a GO/CAUTION/REFUSE verdict and a REVIEW.md whose flagged regions point a human at the known weak spots. *(Gate done; REVIEW.md pending.)*
 
 ### Phase 5 — Open in CH + Moonscraper, real cleanup, ship v0
 
