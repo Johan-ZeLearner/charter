@@ -36,6 +36,10 @@ class BaselineConfig:
     mid_lo: float = 250.0
     mid_hi: float = 3000.0
     vhigh_lo: float = 8000.0
+    # Onset peak-picking sensitivity (exposed so the studio can fight
+    # over-detection on dense mixes): higher delta / longer gap => fewer onsets.
+    onset_delta: float = 0.06
+    onset_min_gap_s: float = 0.045
 
 
 class BaselineDrumTranscriber(DrumTranscriber):
@@ -47,7 +51,9 @@ class BaselineDrumTranscriber(DrumTranscriber):
     def transcribe(self, audio: AudioBuffer) -> list[DrumOnset]:
         x, sr = audio.samples, audio.sr
         env, fps = dsp.onset_envelope(x, sr)
-        onset_frames = dsp.peak_pick(env, fps)
+        onset_frames = dsp.peak_pick(
+            env, fps, delta=self.cfg.onset_delta, min_gap_s=self.cfg.onset_min_gap_s
+        )
         if len(onset_frames) == 0:
             return []
         S, freqs, _ = dsp.stft_mag(x, sr)

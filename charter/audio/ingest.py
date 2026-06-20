@@ -33,16 +33,23 @@ class Tags:
 
 
 def decode_audio(path: str | Path, *, sr: int = ANALYSIS_SR,
-                 loudnorm: bool = True, max_seconds: float | None = None) -> AudioBuffer:
+                 loudnorm: bool = True, max_seconds: float | None = None,
+                 start_seconds: float | None = None) -> AudioBuffer:
     """Decode any FFmpeg-readable file to a mono float32 buffer at ``sr``.
 
-    ``max_seconds`` truncates the decode — handy for a fast end-to-end test on a
-    clip before committing to a full-song (slow) separation pass.
+    ``max_seconds`` truncates the decode and ``start_seconds`` seeks to a window
+    start — together they decode an arbitrary clip ``[start, start+length)``,
+    which is what the preview studio needs for a fast tune-and-look loop on a
+    10-20 s window anywhere in the tune.
     """
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg/ffprobe not found on PATH")
     af = "loudnorm=I=-16:TP=-1.5:LRA=11" if loudnorm else "anull"
-    cmd = ["ffmpeg", "-v", "error", "-i", str(path)]
+    # ``-ss`` before ``-i`` = fast (input) seeking; accurate enough for preview.
+    cmd = ["ffmpeg", "-v", "error"]
+    if start_seconds:
+        cmd += ["-ss", str(start_seconds)]
+    cmd += ["-i", str(path)]
     if max_seconds:
         cmd += ["-t", str(max_seconds)]
     cmd += ["-ac", "1", "-ar", str(sr), "-af", af, "-f", "f32le", "-"]

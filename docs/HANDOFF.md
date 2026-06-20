@@ -5,42 +5,58 @@
 
 ---
 
-## 🔴 BLOCKING BUG #1 — Clone Hero shows **"No Part"** (no playable instrument)
+## ✅ RESOLVED — the "No Part" bug was a Clone Hero **controller setting**, not our code
 
-**This is the top priority. Nothing else matters until a generated chart actually loads as playable drums in the user's real Clone Hero.**
+**Top priority is now transcription QUALITY (see the next section).**
 
-### Symptom
-A generated song folder is added to Clone Hero. **The song appears and the audio plays**, but the instrument/difficulty screen shows **"No Part"** — no drums (no playable chart). Reported by the user on a real song (`mp3/clay.mp3` → `out/clay/`) **and** still occurring after the format-hardening fix below.
+### What it actually was (2026-06-20)
+The user's Clone Hero **controller/instrument was bound to "guitar."** With no drums controller active, CH hides the drums part and shows **"No Part"** — for *every* drum chart, not just ours. **Setting the controller to "drums" made the chart appear and play.** `scan-chart` (which byte-matches CH's parser) was correct the entire time: `drumType=fourLanePro, playable=True, expert=1690, PASS` was a true verdict. The folder/format/serializer were never broken.
 
-### The core contradiction (start here)
-`scan-chart` — which is *supposed* to byte-match Clone Hero's own parser (v8.0.1, validated on 40k charts) — **accepts our chart**:
+### Lessons (don't repeat the chase)
+- **Before suspecting the chart, verify the CH side:** controller bound to drums, the right instrument selected, a clean rescan. A known-good community drums chart failing to show as drums is the tell that it's a CH-setup issue, not the file.
+- The earlier "format hardening" (commit `ef4483c`: full Moonscraper `[Song]` block, empty `[Events]`, `song.ini` cleanup) was **not** what fixed it — but it's harmless and keeps us spec-faithful, so it stays.
+- Trust the `scan-chart` PASS. It held.
+
+### Useful facts (still relevant for quality work)
+- `mp3/clay.mp3` is **electronic** with a **~13 s drumless intro** (first note ~tick 4992). ~5.5 min (`song_length=334288` ms).
+- Files in `out/clay/`: `notes.chart` (40 KB, 1690 notes), `song.ini` (`pro_drums=True`), `song.opus` (plays fine).
+
+---
+
+## 🔴 PRIORITY #1 — Transcription quality: the chart "doesn't match the music"
+
+The chart now loads, but on real music it is **not playable-as-the-song**. Root cause is the **baseline ADT** (`charter/audio/adt.py`), a 3-band energy classifier that fails on real mixes in four compounding ways. On `clay.mp3` the 1690 gems broke down as:
+
+| Symptom | Count | Cause (in `_classify`, `adt.py`) |
+|---|---|---|
+| Kick fires on the **bassline**, not the kick | **874** kick events (435 `N 0` + 439 `N 32`) | `low(20–150Hz)/total > 0.28 → KICK`; bass dominates the low band on electronic tracks |
+| **No hi-hat groove** | **1** hi-hat note total | hat needs `vhigh(8kHz–Nyq)/total > 0.45` — almost no real mix clears this, so hats collapse into snare |
+| **Snare on everything else** | **815** snares | every non-kick onset with `mid > 0.18` → snare |
+| **Spurious ghost / 2× floods** | 666 ghost flags, 439 false 2× | velocity `30+97·(env/peak)` lands most hits ≤60 → ghost; the ~150 ms gap rule over-fires 2× kick |
+
+This is a **fundamental** limit of band-energy classification — it cannot be tuned into a chart that matches the song.
+
+### The real lever (matches the env)
+The environment is **torch-native**: `.venv` has **torch 2.12 + torchaudio 2.11 + MPS (M1 GPU)**, demucs 4.0.1 — but **NO TensorFlow / librosa / madmom / adtof / omnizart**. So the docs' ADTOF (TensorFlow) engine is the *wrong first pick* on this machine. Prefer a **torch-native per-drum-stem approach** (the docs' Phase-7 DrumSep/LarsNet arbiter): split the drum signal into kick / snare / hi-hat / toms / cymbals stems, then run onset detection **per stem** — classification becomes "which stem fired," which directly fixes all four failure modes above and unlocks toms + ride-vs-crash (non-empty charts). See [05-drum-transcription.md](./05-drum-transcription.md) and [04-source-separation.md](./04-source-separation.md).
+
+### Cheap interim hardening (no new deps, partial)
+If a quick win is wanted before the model lands: lower the hi-hat `vhigh` gate so a groove returns, gate kicks on transient sharpness (not raw low-band energy) to reject bass, disable the ghost/2×-kick floods by default. This makes the chart *recognizable*, not *good*.
+
+---
+
+## 🎛️ The preview studio (`charter/studio/`) — built 2026-06-20
+
+A **tune-and-preview loop**, since the baseline can't be tuned blind but can be tuned fast. Run:
+
+```bash
+python -m charter.studio mp3/clay.mp3      # opens a browser previewer; --port/--host/--no-open
 ```
-drumType = fourLanePro, playable = True, instruments = ['drums'],
-noteCounts: drums/expert = 1690, PASS
-```
-…but the user's **actual Clone Hero disagrees** and shows no part. So either (a) scan-chart ≠ the user's CH version, (b) a Clone Hero **song-cache / rescan** problem, or (c) a subtle `.chart`/`song.ini` issue scan-chart tolerates but CH does not. **We do not yet know which.** Do not trust the scan-chart PASS as proof the user's CH will load it — that assumption is exactly what's in question.
 
-### What was already tried (commit `ef4483c`) — did NOT fix it
-The first output had a minimal `[Song]` block, no `[Events]` section, and an empty `year =` line. We hardened the serializer to match what Moonscraper actually writes:
-- `[Song]`: full key set (`Album`, `Year`, `Player2`, `Difficulty`, `PreviewStart/End`, `Genre`, `MediaType`) + `MusicStream = "song.opus"`.
-- Added an (empty) `[Events]` section.
-- `song.ini`: dropped the empty `year =`, added `diff_drums_real`.
-
-Result: `out/clay/notes.chart` now has `[Song]` / `[SyncTrack]` / `[Events]` / `[ExpertDrums]` (1690 notes), `pro_drums=True`. scan-chart still PASSes. **User reports the "No Part" issue persists.** So format minimalism was *not* the (whole) cause.
-
-### Leads / next steps, in priority order
-1. **Confirm a TRUE full rescan, not a cached result.** CH caches scans in `songcache.bin`. If the song was first seen with the broken pre-fix chart, CH may keep the cached "no part". **Delete the song from the library AND delete/secure `songcache.bin`, then full-rescan.** This is the cheapest possible cause and must be ruled out first. (Audio playing proves the folder is scanned, but not that the chart was re-parsed.)
-2. **Get the user's exact Clone Hero version.** scan-chart 8.0.1 targets a specific CH parser; a mismatch (older/newer CH) could explain the disagreement.
-3. **Moonscraper round-trip (isolates our serialization).** Open `out/clay/notes.chart` in Moonscraper:
-   - If Moonscraper **loads the drums track** → our serialization is structurally fine; re-export from Moonscraper and test *that* in CH. If the Moonscraper re-export loads but ours doesn't → diff the two files byte-for-byte to find what CH cares about.
-   - If Moonscraper **also shows nothing** → our `.chart` is malformed in a way scan-chart misses. Diff against a known-good chart.
-4. **Diff against a known-good community chart** that *does* load in the user's CH: compare `notes.chart` header/section structure and `song.ini` field-by-field. Look especially at: file **encoding** (UTF-8 vs UTF-8-BOM), **line endings** (we emit `\n`; some tooling expects `\r\n`), and section/key casing.
-5. **Try emitting `notes.mid` instead** as a cross-check (docs/03 §4 has the full spec: `PART DRUMS`, type-1, note numbers 95–101, tom markers 110/111/112, `[ENABLE_CHART_DYNAMICS]`). If the `.mid` loads but the `.chart` doesn't, the bug is `.chart`-specific.
-6. **Re-examine drum-type detection.** We set `pro_drums=True`. Confirm against the user's CH that a `.chart` Expert-only drums track with `pro_drums=True` is actually offered as a part. (Our chart has only `[ExpertDrums]`, no Hard/Medium/Easy — confirm CH doesn't require lower difficulties to show the part. scan-chart did not flag this, but verify in-game.)
-
-### Useful facts already established
-- `mp3/clay.mp3` has a **~13 s drumless intro** (first note ~tick 4992). Not related to "no part", but explains sparse early output.
-- Files in `out/clay/`: `notes.chart` (40 KB, 1690 notes), `song.ini` (pro_drums=True), `song.opus` (3.3 MB, plays fine).
+- **Zero new deps:** a stdlib `http.server` (no FastAPI) serves a **Three.js Clone-Hero-style highway** (notes scroll to a strikeline, lane targets flash on hit, beat/downbeat lines) loaded via import-map (no npm/build). Reuses the existing pipeline.
+- **Loop:** pick a 10-20 s window (anywhere in the tune) → choose a **genre preset** + nudge sliders (separation, onset sensitivity, kick/snare/hi-hat gates, grid, dynamics, 2× kick) → **Re-preview** (~1.8 s for a 16 s HPSS window) → watch the highway **synced to the clip audio** + hear a **synthesized drum overlay** → iterate → (export wiring is the obvious next step).
+- **Architecture:** `presets.py` (settings + genre bundles → `BaselineConfig`/`MapConfig`/separator/subdiv), `service.py` (`run_preview` inlines the stages to expose the beat grid; note times offset by `beat_times[0]` so the highway doesn't drift), `server.py` (3 routes: `/api/meta`, `/api/preview`, `/api/audio` WAV), `web/` (`index.html`/`styles.css`/`app.js`). The Three.js scene maps 1:1 onto **React-Three-Fiber** for the planned OCTAVE-style editor (north stars: `opria123/octave`, `chart-forge.app` — both are R3F highways; neither auto-charts, which is our niche).
+- **Two small pipeline hooks added:** `decode_audio(..., start_seconds=)` for window seeking; `BaselineConfig.onset_delta/onset_min_gap_s` to fight onset over-detection.
+- **Honest result on `clay`:** the studio makes the baseline's ceiling visible — even tuned, it's mostly snare with few kicks and ~no hi-hats (band-energy can't split broadband hat transients from snare). That's the case for the **torch per-drum-stem engine**, which slots into the same UI as another "Separation" option.
 
 ---
 

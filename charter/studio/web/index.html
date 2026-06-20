@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>charter studio</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <header>
+        <div class="brand">charter <span>studio</span></div>
+        <div id="songinfo" class="songinfo">loading…</div>
+      </header>
+
+      <section class="group">
+        <h3>Window <small>preview anywhere in the tune</small></h3>
+        <label>Start <output id="startOut">0:00</output>
+          <input id="start" type="range" min="0" max="100" value="0" step="0.1" />
+        </label>
+        <label>Length <output id="lenOut">16s</output>
+          <input id="length" type="range" min="8" max="20" value="16" step="1" />
+        </label>
+        <button id="shuffle" class="ghost">🎲 jump somewhere</button>
+      </section>
+
+      <section class="group">
+        <h3>Music type</h3>
+        <label>Genre preset
+          <select id="genre">
+            <option>Default</option>
+            <option selected>Electronic</option>
+            <option>Rock</option>
+            <option>Metal</option>
+            <option>Pop</option>
+            <option>Acoustic / Jazz</option>
+          </select>
+        </label>
+        <label>Separation
+          <select id="separation">
+            <option value="hpss">HPSS (fast, electronic)</option>
+            <option value="passthrough">None (raw mix)</option>
+            <option value="auto">Demucs auto (slow)</option>
+            <option value="demucs">Demucs (slow)</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="group">
+        <h3>Transcription <small>tune, then re-preview</small></h3>
+        <label>Onset sensitivity <output id="onsetOut"></output>
+          <input id="onset_delta" type="range" min="0.02" max="0.25" step="0.005" />
+        </label>
+        <label>Kick gate (raise to reject bass) <output id="kickOut"></output>
+          <input id="kick_low_ratio" type="range" min="0.15" max="0.6" step="0.01" />
+        </label>
+        <label>Snare gate <output id="snareOut"></output>
+          <input id="snare_mid_ratio" type="range" min="0.08" max="0.4" step="0.01" />
+        </label>
+        <label>Hi-hat gate (lower to find hats) <output id="hatOut"></output>
+          <input id="hat_vhigh_ratio" type="range" min="0.1" max="0.6" step="0.01" />
+        </label>
+        <label>Grid
+          <select id="subdivisions">
+            <option value="2">1/8</option>
+            <option value="4" selected>1/16</option>
+            <option value="3">1/8 triplet</option>
+            <option value="6">1/16 triplet</option>
+          </select>
+        </label>
+        <div class="row">
+          <label class="chk"><input id="dynamics" type="checkbox" /> dynamics</label>
+          <label class="chk"><input id="double_kick" type="checkbox" /> 2× kick</label>
+        </div>
+      </section>
+
+      <button id="repreview" class="primary">↻ Re-preview</button>
+      <div id="diag" class="diag"></div>
+    </aside>
+
+    <main id="stage">
+      <div id="highway"></div>
+      <div id="transport">
+        <button id="play" class="primary">▶ Play</button>
+        <label class="chk"><input id="overlay" type="checkbox" checked /> 🔊 drum overlay</label>
+        <span id="clock" class="clock">0.0s</span>
+        <span id="status" class="status"></span>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
