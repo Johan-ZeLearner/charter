@@ -28,14 +28,18 @@
 > Goal: a complete `mp3 → song folder` path that produces an **instantly playable Expert chart** Clone Hero accepts as 4-lane Pro every time, plus an honest REVIEW.md and one real cleanup pass. Quality is allowed to be mediocre — the goal is a measurable, valid, end-to-end loop.
 
 > **BUILD STATUS (2026-06-20):** Phases **1–3 are implemented**, plus the Phase-4
-> audio gate. `charter/` runs `audio file → playable song folder` end-to-end on a
+> audio gate. `charter/` runs `audio file → song folder` end-to-end on a
 > dependency-light baseline (numpy/scipy + FFmpeg): HPSS separation, a DP beat
 > tracker with a smoothed per-beat tempo map, and a band-energy kick/snare/hat
 > transcriber → the Phase-2 mapping/serializer → scan-chart `fourLanePro` +
 > `song.opus` (`playable=True`). **37 tests pass.** SOTA adapters (Demucs/Beat
-> This!/ADTOF) are wired as optional and used if installed. Still baseline-grade:
-> no toms / ride-vs-crash, no REVIEW.md yet — those are Part B + Phase 4's REVIEW
-> file. See the project `README.md` for run/test commands.
+> This!/ADTOF) are wired as optional and used if installed.
+>
+> 🔴 **BLOCKING:** the user's real Clone Hero shows **"No Part"** for generated
+> charts even though scan-chart accepts them. Format hardening (commit `ef4483c`)
+> did **not** fix it. This must be resolved before any further phase work — full
+> diagnosis, what was tried, and next steps are in **[HANDOFF.md](./HANDOFF.md)**.
+> Still baseline-grade beyond that: no toms / ride-vs-crash, no REVIEW.md yet.
 
 ### Phase 1 — Vendor the spec + stand up scan-chart as a day-one passing test
 
