@@ -1,19 +1,60 @@
 # charter
 
-Turn an uploaded **mp3** into a **playable Clone Hero 4-lane Pro Drums** chart.
+Turn an **mp3** into a **playable Clone Hero 4-lane Pro Drums** chart — and **tune
+the transcription per song** in a Clone-Hero-style preview studio instead of
+guessing.
 
-> Status: early build, end-to-end runnable. **`audio file → playable song folder`
-> works today** with a dependency-light baseline (numpy/scipy + FFmpeg, no model
-> downloads). Quality is "instant draft": the kick/snare/hi-hat backbone, a real
-> tempo map, and a valid 4-lane Pro chart Clone Hero loads — **not** hand-charter
-> quality. Toms / ride-vs-crash and the SOTA models (Demucs/Beat This!/ADTOF) are
-> the next quality levers (wired as optional adapters; see docs/10 Part B).
+> **Status:** end-to-end runnable. The pipeline turns `audio → playable song
+> folder` today (numpy/scipy + FFmpeg, no model downloads), and a **preview
+> studio** lets you audition the auto-chart on a scrolling CH highway over a
+> 10–20 s window, tune settings by music type, and iterate in ~2 s. Output is an
+> "instant draft," not hand-charter quality — the studio exists to make that
+> draft *tunable*, and to make the baseline's limits *visible*. The next quality
+> lever is a per-drum-stem ADT (kick/snare/hi-hat/tom/cymbal).
 
-📚 **Design & source of truth:** [`docs/`](./docs/README.md) — start there. The
-thesis, the 8-stage pipeline, the chart-format bible, and the MVP roadmap all
-live in those documents. This README is just the build/run entry point.
+📚 **Design & source of truth:** [`docs/`](./docs/README.md) — the thesis, the
+8-stage pipeline, the chart-format bible, and the roadmap. Current state and
+next steps live in [`docs/HANDOFF.md`](./docs/HANDOFF.md).
 
-## What works today
+---
+
+## The product: a tuning studio 🎛️
+
+charter is **human-in-the-loop**. Drum charting is *transcription*, not creative
+choreography — so the realistic target is an **AI draft you tune in minutes**, not
+a perfect one-shot. The studio is where you do that: load a song, preview the
+auto-charted drums on a Clone-Hero-style 3D highway synced to the audio, adjust
+the transcription by ear, and iterate.
+
+```bash
+python -m charter.studio mp3/your-song.mp3      # opens a browser previewer; Ctrl-C to stop
+```
+
+**Zero extra install** — it reuses what the pipeline already needs (numpy / scipy
+/ FFmpeg). A tiny stdlib HTTP server serves a **Three.js** highway loaded via
+import-map (no FastAPI, no npm, no build step).
+
+In the browser:
+
+- **Pick a 10–20 s window** anywhere in the tune (the loop is seconds, not a
+  full-song render).
+- **Choose a genre preset** (Electronic / Rock / Metal / Pop / Jazz) and nudge
+  sliders — separation, onset sensitivity, kick/snare/hi-hat gates, grid,
+  dynamics, 2× kick.
+- **Re-preview (~2 s)** → notes scroll to a strikeline in sync with the clip
+  audio, lane pads flash on hit, and a **synthesized drum overlay** lets you hear
+  whether the chart matches the music.
+- Live diagnostics: note/lane counts, separator, and the GO/CAUTION/REFUSE gate.
+
+> **North stars:** [`opria123/octave`](https://github.com/opria123/octave) and
+> [chart-forge.app](https://chart-forge.app/) — both are React-Three-Fiber chart
+> editors with the same highway. Neither auto-charts from audio; **that gap is our
+> niche.** The Three.js scene here ports ~1:1 to R3F for the planned
+> OCTAVE-style / Moonscraper-replacement editor.
+
+---
+
+## The pipeline (under the studio)
 
 ```
 audio file ──► [ingest] ──► [drum separation] ──► [beat/tempo] ──► [drum ADT]
@@ -22,15 +63,34 @@ audio file ──► [ingest] ──► [drum separation] ──► [beat/tempo]
    (notes.chart + song.ini + song.opus)
 ```
 
-- **Symbolic backend** (roadmap Phase 1–2): `DrumNote → .chart + song.ini`, the
-  format firewall (tom/cymbal inversion, opt-in 2× kick, `BPM×1000`, `TS`
-  exponent, same-color collisions) — deterministic, validated by Clone Hero's own
-  parser (scan-chart).
-- **Audio frontend** (roadmap Phase 3): `mp3 → drum onsets + tempo grid` with a
+- **Symbolic backend** (Phase 1–2): `DrumNote → .chart + song.ini`, the format
+  firewall (tom/cymbal inversion, opt-in 2× kick, `BPM×1000`, `TS` exponent,
+  same-color collisions) — deterministic, validated by Clone Hero's own parser
+  (scan-chart).
+- **Audio frontend** (Phase 3): `mp3 → drum onsets + tempo grid` with a
   numpy/scipy baseline — HPSS percussive separation, a DP beat tracker with a
   smoothed per-beat tempo map, and a band-energy kick/snare/hat transcriber.
   Optional **Demucs / Beat This! / ADTOF** adapters are used automatically if
   installed.
+
+Batch use without the UI:
+
+```bash
+# Audio file -> playable Clone Hero song folder (+ song.opus), then validate
+python -m charter.cli mp3tochart song.mp3 out/song --validate
+
+# GM-drum MIDI -> song folder (the symbolic backend, no audio/ML)
+python -m charter.cli midi2chart tests/fixtures/basic_groove.mid out/basic --validate
+
+# Validate any existing song folder against scan-chart
+python -m charter.cli validate out/song
+```
+
+> **Loading into Clone Hero:** drop the song folder into CH's songs folder. If the
+> drums show **"No Part,"** your controller/instrument is bound to *guitar* — set
+> it to **drums** and the chart appears. (This is a CH setting, not a chart bug.)
+
+---
 
 ## Layout
 
@@ -46,6 +106,11 @@ charter/
 │   │   ├── beats.py       #   numpy DP tracker + optional Beat This! adapter
 │   │   ├── adt.py         #   band-energy baseline + optional ADTOF adapter
 │   │   └── pipeline.py    #   mp3 → Song orchestrator
+│   ├── studio/            # 🎛️ the preview/tuning UI (stdlib server + Three.js highway)
+│   │   ├── presets.py     #   genre presets + settings → pipeline configs
+│   │   ├── service.py     #   window + settings → notes-with-times JSON
+│   │   ├── server.py      #   stdlib HTTP routes (/api/preview, /api/audio …)
+│   │   └── web/           #   index.html + app.js (Three.js highway) + styles.css
 │   ├── validate.py        # Python bridge to the scan-chart gate
 │   └── cli.py             # `mp3tochart` / `midi2chart` / `validate`
 ├── tools/validation/      # Node ≥24 — scan-chart subprocess (the canonical gate)
@@ -55,7 +120,7 @@ charter/
 ## Setup
 
 ```bash
-# Python deps (audio frontend needs numpy + scipy; pytest for the suite)
+# Python deps (audio frontend + studio need numpy + scipy; pytest for the suite)
 python3 -m pip install numpy scipy pytest
 
 # FFmpeg (system binary — decode/normalize/encode audio)
@@ -68,23 +133,8 @@ cd tools/validation && npm install && cd -
 #   pip install demucs beat-this        # better stem + beat tracking
 ```
 
-## Use
-
-```bash
-# Audio file -> playable Clone Hero song folder (+ song.opus), then validate
-python -m charter.cli mp3tochart song.mp3 out/song --validate
-
-# GM-drum MIDI -> song folder (the symbolic backend, no audio/ML)
-python -m charter.cli midi2chart tests/fixtures/basic_groove.mid out/basic --validate
-
-# Validate any existing song folder against scan-chart
-python -m charter.cli validate out/song
-```
-
-`mp3tochart` prints a **GO / CAUTION / REFUSE** drum-prominence gate, the picked
-adapters, the tempo/onset/note counts, and review notes; with `--validate` it
-asserts Clone Hero detects `fourLanePro`. Drop the result into Clone Hero's songs
-folder (or open in Moonscraper to clean up).
+> The studio itself needs **no extra packages** beyond numpy/scipy/FFmpeg — it
+> serves a Three.js highway from a CDN via import-map, so there's nothing to build.
 
 ## Test
 
@@ -92,5 +142,8 @@ folder (or open in Moonscraper to clean up).
 python -m pytest    # full suite; scan-chart / ffmpeg tests auto-skip if those tools are absent
 ```
 
-37 tests cover the serializer (format invariants), GM mapping/collision/2× kick,
-the DSP/tempo/ADT baseline, and end-to-end `audio → scan-chart fourLanePro`.
+Tests cover the serializer (format invariants), GM mapping/collision/2× kick, the
+DSP/tempo/ADT baseline, and end-to-end `audio → scan-chart fourLanePro`.
+
+> **Note:** source audio (`*.mp3`, etc.) is **gitignored and never committed** —
+> bring your own files; point the CLI/studio at a local path.
