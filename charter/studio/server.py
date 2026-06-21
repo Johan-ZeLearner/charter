@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from ..patterns import list_patterns
 from .service import clip_wav_bytes, run_preview, song_meta
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -58,8 +59,12 @@ class StudioHandler(BaseHTTPRequestHandler):
                 fname, ctype = _STATIC[route]
                 data = (WEB_DIR / fname).read_bytes()
                 return self._send(200, data, ctype)
+            if route == "/favicon.ico":
+                return self._send(204, b"", "image/x-icon")  # silence the console 404
             if route == "/api/meta":
                 return self._json(200, song_meta(self.audio_path))
+            if route == "/api/patterns":
+                return self._json(200, {"patterns": list_patterns()})
             if route == "/api/audio":
                 q = parse_qs(parsed.query)
                 start = float(q.get("start_s", ["0"])[0])

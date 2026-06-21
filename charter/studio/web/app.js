@@ -452,6 +452,12 @@ el.play.addEventListener('click', () => { if (audio.paused) audio.play(); else a
 // ============================================================================
 async function init() {
   resize(); tick();
+  // Load the pattern library up front so the dropdown is never empty, even if
+  // the first preview is slow or fails.
+  try {
+    const pj = await (await fetch('/api/patterns')).json();
+    populatePatterns(pj.patterns);
+  } catch (e) { /* preview will populate as a fallback */ }
   try {
     const meta = await (await fetch('/api/meta')).json();
     duration = meta.duration_s || 60;

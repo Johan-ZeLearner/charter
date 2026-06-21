@@ -63,7 +63,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         "double_kick": False,
     },
     "Rock": {
-        "separation": "auto",
+        "separation": "hpss",  # studio = fast iteration; Demucs is opt-in (slow + 80MB DL)
         "kick_low_ratio": 0.30,
         "hat_vhigh_ratio": 0.30,
         "onset_delta": 0.07,
@@ -74,7 +74,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         # Tuned for fast melodic death metal: fine kick gap for sustained double
         # bass, less snare, a 1/32 grid so fast kicks don't merge, 2x kick on.
         # If the BPM readout is HALF the real tempo, bump Tempo to ×2.
-        "separation": "auto",
+        "separation": "hpss",  # studio = fast iteration; Demucs is opt-in (slow + 80MB DL)
         "kick_low_ratio": 0.26,
         "hat_vhigh_ratio": 0.32,
         "onset_delta": 0.05,
@@ -87,7 +87,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         "double_kick_gap_s": 0.110,
     },
     "Pop": {
-        "separation": "auto",
+        "separation": "hpss",  # studio = fast iteration; Demucs is opt-in (slow + 80MB DL)
         "kick_low_ratio": 0.30,
         "hat_vhigh_ratio": 0.28,
         "onset_delta": 0.08,
@@ -95,7 +95,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         "double_kick": False,
     },
     "Acoustic / Jazz": {
-        "separation": "auto",
+        "separation": "hpss",  # studio = fast iteration; Demucs is opt-in (slow + 80MB DL)
         "kick_low_ratio": 0.30,
         "hat_vhigh_ratio": 0.24,
         "snare_mid_ratio": 0.16,
