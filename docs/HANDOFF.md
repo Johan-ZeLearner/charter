@@ -1,7 +1,21 @@
 # Handoff & Open Issues
 
-> **Status:** Living handoff · **Last updated:** 2026-06-20 · **Audience:** the next build agent(s)
+> **Status:** Living handoff · **Last updated:** 2026-06-21 · **Audience:** the next build agent(s)
 > **Purpose:** Where the project actually stands, the BLOCKING open bug, what was already tried (so you don't repeat it), and the remaining work. Read [README.md](./README.md) first for the doc map, then this.
+
+---
+
+## 🔄 DIRECTION RESET (2026-06-21) — grounding the beat grid first
+
+The user reset the build to a **simpler, foundation-first** version. Rationale: blind ADT on dense/distorted metal is unreliable, and **everything downstream (drums, bass, other instrument lines) snaps to the beat grid** — so the grid must be accurate, drift-tracking, and *correctable* before anything is built on it.
+
+- **The full auto-charter studio** (ADT engines: baseline/drumsep, pattern mode, the kick-from-audio hybrid, tempo/metal accuracy controls) is **preserved on the `studio-autocharter-v1` branch** for reference. All of that work (drumsep per-drum engine, pattern library, etc.) is still valid — it's just paused while the foundation is grounded.
+- **`main` now hosts the beat-grid studio** (`charter/studio/`, rewritten): `analyze.py` (beats + drift-tracking tempo curve + sections + waveform), `sections.py` (novelty segmentation), `server.py` (`/api/analyze`, `/api/audio` with HTTP Range for full-song seek). Frontend = a **Clone-Hero highway** (beat/bar lines fly to a strikeline + **metronome click** to judge the beat by ear) **+ a DAW timeline** (waveform, beats/bars, colored sections, green tempo-drift curve, playhead, click-seek, wheel-zoom, drag-pan). Controls: tempo ×½/×1/×2, tempo hint, beats-per-bar, shift-downbeat, re-analyze. Run `python -m charter.studio mp3/clay.mp3`.
+- **Core concern handled:** beats are "ever-evolving" — the grid is a *per-beat* sequence (not one BPM), so drift is preserved and shown on the tempo curve; the metronome click is how the user verifies alignment; ×2/×½ + tempo-hint + phase-shift fix the gross errors.
+- **Verified in a real browser** (clay, melodic death metal): 593 beats, 149 bars, 7 sections, drift 108–126 BPM; highway scrolls + section tint; timeline + playhead + tempo curve render; full-song playback/seek works; zero console errors.
+- **Next on this track (open):** manual **beat editing** (drag/add/delete individual beats on the timeline — the real fix for where the detector loses the beat); **section boundary editing** (split/merge/rename); better segmentation (the 135 s block should subdivide); per-region tempo correction; then start layering instrument lines onto the grid.
+
+The sections below describe the (still-valid, branch-preserved) auto-charter work.
 
 ---
 

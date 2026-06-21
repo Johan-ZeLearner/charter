@@ -1,27 +1,29 @@
-"""A tiny stdlib HTTP server for the studio — zero extra dependencies.
+"""Stdlib HTTP server for the beat-grid studio — no external deps.
 
-Deliberately not FastAPI: the user's env already has numpy/scipy/ffmpeg, and a
-no-install ``python -m charter.studio song.mp3`` that just opens a browser is the
-lowest-friction way to get the tune loop running. Three routes:
+Routes:
+    GET /                              the studio page (web/index.html)
+    GET /app.js /styles.css            static
+    GET /api/meta                      {name, artist, duration_s}
+    GET /api/analyze?tempo_mult&...    beats + tempo curve + sections + waveform
+    GET /api/audio                     the full source audio, with HTTP Range (seek)
 
-    GET  /                      -> the previewer page (web/index.html)
-    GET  /<static>              -> web/app.js, web/styles.css
-    GET  /api/meta              -> {name, artist, duration_s}
-    POST /api/preview           -> notes-with-times JSON for a window+settings
-    GET  /api/audio?start_s&length_s -> the clip as WAV (for playback)
+The grid is the foundation, so the studio analyzes the WHOLE song (beats drift,
+sections span the song) and serves the full audio so the DAW timeline can scrub
+anywhere.
 """
 
 from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ..patterns import list_patterns
-from .service import clip_wav_bytes, run_preview, song_meta
+from .analyze import analyze_song
+from .service import song_meta
 
 WEB_DIR = Path(__file__).parent / "web"
 _STATIC = {
@@ -33,75 +35,91 @@ _STATIC = {
 
 
 class StudioHandler(BaseHTTPRequestHandler):
-    audio_path: str = ""  # set on the class before serving
+    audio_path: str = ""
 
-    # --- helpers -------------------------------------------------------------
-    def _send(self, code: int, body: bytes, ctype: str) -> None:
+    def _send(self, code, body, ctype, extra=None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(body)
+        if body:
+            self.wfile.write(body)
 
-    def _json(self, code: int, obj: object) -> None:
+    def _json(self, code, obj):
         self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
 
-    def log_message(self, fmt: str, *args) -> None:  # quieter console
+    def log_message(self, *a):
         return
 
-    # --- routes --------------------------------------------------------------
-    def do_GET(self) -> None:
+    def _serve_audio(self):
+        """Serve the source file, honoring a single Range request for seeking."""
+        path = self.audio_path
+        size = os.path.getsize(path)
+        ctype = mimetypes.guess_type(path)[0] or "audio/mpeg"
+        rng = self.headers.get("Range")
+        if rng and rng.startswith("bytes="):
+            try:
+                s, _, e = rng[6:].partition("-")
+                start = int(s) if s else 0
+                end = int(e) if e else size - 1
+                end = min(end, size - 1)
+                start = max(0, min(start, end))
+            except ValueError:
+                start, end = 0, size - 1
+            with open(path, "rb") as f:
+                f.seek(start)
+                chunk = f.read(end - start + 1)
+            self.send_response(206)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(len(chunk)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(chunk)
+        else:
+            with open(path, "rb") as f:
+                data = f.read()
+            self._send(200, data, ctype, {"Accept-Ranges": "bytes"})
+
+    def do_GET(self):
         parsed = urlparse(self.path)
-        route = parsed.path
+        route, q = parsed.path, parse_qs(parsed.query)
         try:
+            if route == "/favicon.ico":
+                return self._send(204, b"", "image/x-icon")
             if route in _STATIC:
                 fname, ctype = _STATIC[route]
-                data = (WEB_DIR / fname).read_bytes()
-                return self._send(200, data, ctype)
-            if route == "/favicon.ico":
-                return self._send(204, b"", "image/x-icon")  # silence the console 404
+                return self._send(200, (WEB_DIR / fname).read_bytes(), ctype)
             if route == "/api/meta":
                 return self._json(200, song_meta(self.audio_path))
-            if route == "/api/patterns":
-                return self._json(200, {"patterns": list_patterns()})
             if route == "/api/audio":
-                q = parse_qs(parsed.query)
-                start = float(q.get("start_s", ["0"])[0])
-                length = float(q.get("length_s", ["16"])[0])
-                wav = clip_wav_bytes(self.audio_path, start, length)
-                return self._send(200, wav, "audio/wav")
-            # last-ditch static (e.g. favicon) from web dir
-            candidate = (WEB_DIR / route.lstrip("/")).resolve()
-            if candidate.is_file() and WEB_DIR.resolve() in candidate.parents:
-                ctype = mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
-                return self._send(200, candidate.read_bytes(), ctype)
+                return self._serve_audio()
+            if route == "/api/analyze":
+                def f(name, default):
+                    return q.get(name, [str(default)])[0]
+                hint = q.get("tempo_hint", [""])[0]
+                report = analyze_song(
+                    self.audio_path,
+                    tempo_mult=float(f("tempo_mult", 1.0)),
+                    tempo_hint=float(hint) if hint else None,
+                    beats_per_bar=int(f("beats_per_bar", 4)),
+                    phase=int(q["phase"][0]) if "phase" in q else None,
+                )
+                return self._json(200, report)
             return self._json(404, {"error": f"not found: {route}"})
-        except Exception as exc:  # surface errors to the UI rather than 500-silent
-            return self._json(500, {"error": str(exc)})
-
-    def do_POST(self) -> None:
-        parsed = urlparse(self.path)
-        if parsed.path != "/api/preview":
-            return self._json(404, {"error": f"not found: {parsed.path}"})
-        try:
-            n = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(n) or b"{}")
-            start = float(payload.get("start_s", 0.0))
-            length = float(payload.get("length_s", 16.0))
-            settings = payload.get("settings", {})
-            result = run_preview(self.audio_path, start, length, settings)
-            return self._json(200, result)
         except Exception as exc:
             return self._json(500, {"error": str(exc)})
 
 
-def serve(audio_path: str, host: str = "127.0.0.1", port: int = 8765,
-          open_browser: bool = True) -> None:
+def serve(audio_path, host="127.0.0.1", port=8765, open_browser=True):
     StudioHandler.audio_path = str(audio_path)
     httpd = ThreadingHTTPServer((host, port), StudioHandler)
     url = f"http://{host}:{port}/"
-    print(f"charter studio  ·  {Path(audio_path).name}")
+    print(f"charter studio (beat grid)  ·  {Path(audio_path).name}")
     print(f"  open {url}   (Ctrl-C to stop)")
     if open_browser:
         try:

@@ -1,473 +1,330 @@
-// charter studio — Clone Hero-style drum highway previewer.
-// Renders the auto-charted notes scrolling toward a strikeline, in sync with the
-// clip audio, plus an audible drum overlay so you can judge "does it match" by
-// ear. The Three.js scene here maps 1:1 onto React-Three-Fiber for the future
-// OCTAVE-style editor.
+// charter studio — beat-grid & structure editor.
+// Top: a Clone-Hero highway where beat/bar lines fly toward a strikeline with a
+// metronome click, so you can SEE and HEAR whether the grid matches the music.
+// Bottom: a DAW timeline (waveform + beats/bars + sections + tempo curve).
+// The grid is the foundation; this tool exists to ground and correct it.
 import * as THREE from 'three';
 
-// ---- layout constants -------------------------------------------------------
-const LANES = ['red', 'yellow', 'blue', 'green'];
-const COL = { red:0xe6394a, yellow:0xf2c83f, blue:0x3a82f6, green:0x33c66b, kick:0xff8c2e };
-const LANE_W = 1.05;
-const BOARD_W = LANE_W * 4;
-const SPEED = 6.0;           // world units per second of scroll
-const STRIKE_Z = 3.5;        // where notes are "hit" (near the camera)
-const LOOKAHEAD = 3.5;       // seconds of upcoming chart visible above the strike
-const PAST = 0.4;            // seconds a hit note lingers below the strike
-const FAR_Z = STRIKE_Z - LOOKAHEAD * SPEED;
-const laneX = (i) => (i - 1.5) * LANE_W;
-
-// ---- dom --------------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const el = {
-  panel:$('panel'), highway:$('highway'), songinfo:$('songinfo'), diag:$('diag'),
-  start:$('start'), startOut:$('startOut'), length:$('length'), lenOut:$('lenOut'),
-  shuffle:$('shuffle'), mode:$('mode'), patternGroup:$('patternGroup'),
-  pattern:$('pattern'), patternDesc:$('patternDesc'), kick_from_audio:$('kick_from_audio'),
-  engineGroup:$('engineGroup'), engine:$('engine'), engineHint:$('engineHint'),
-  baselineGroup:$('baselineGroup'), genre:$('genre'), separation:$('separation'),
-  subdivisions:$('subdivisions'), tempo_mult:$('tempo_mult'),
-  dynamics:$('dynamics'), double_kick:$('double_kick'),
-  tom_split:$('tom_split'), repreview:$('repreview'), play:$('play'), overlay:$('overlay'),
-  clock:$('clock'), status:$('status'),
-  drumsepTuning:$('drumsepTuning'), bandTuning:$('bandTuning'),
-  // tuning sliders — referenced as el[k] in the SLIDERS loop, so they MUST be here
-  onset_delta:$('onset_delta'), kick_low_ratio:$('kick_low_ratio'),
-  snare_mid_ratio:$('snare_mid_ratio'), hat_vhigh_ratio:$('hat_vhigh_ratio'),
-  kick_gap_s:$('kick_gap_s'), snare_gate:$('snare_gate'),
-};
-const SLIDERS = ['onset_delta', 'kick_low_ratio', 'snare_mid_ratio', 'hat_vhigh_ratio',
-                 'kick_gap_s', 'snare_gate'];
-const SLIDER_OUT = { onset_delta:'onsetOut', kick_low_ratio:'kickOut', snare_mid_ratio:'snareOut',
-                     hat_vhigh_ratio:'hatOut', kick_gap_s:'kickGapOut', snare_gate:'snareGateOut' };
-const SLIDER_DP = { onset_delta:2, kick_low_ratio:2, snare_mid_ratio:2, hat_vhigh_ratio:2,
-                    kick_gap_s:3, snare_gate:2 };  // decimal places per slider output
-
-// ---- state ------------------------------------------------------------------
-let duration = 0;            // full song length (s)
-let settings = null;         // server-resolved settings (source of truth)
-let preview = null;          // last preview payload
-let noteGroup = null;        // scrolling group of note + beat meshes
-const targets = [];          // strike-line lane pads (for hit flashes)
-let kickTarget = null;
-
-// ============================================================================
-//  THREE.js scene
-// ============================================================================
-const renderer = new THREE.WebGLRenderer({ antialias:true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-el.highway.appendChild(renderer.domElement);
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0c0e14);
-// Fog from the real camera->far-end distance so the WHOLE lookahead stays
-// visible (only the very back softens), rather than fogging out upcoming notes.
-const CAM = { y: 6.2, z: STRIKE_Z + 5.5 };
-const FAR_DIST = Math.hypot(CAM.z - FAR_Z, CAM.y);
-scene.fog = new THREE.Fog(0x0c0e14, FAR_DIST * 0.5, FAR_DIST + 6);
-
-const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
-camera.position.set(0, CAM.y, CAM.z);
-camera.lookAt(0, 0, (STRIKE_Z + FAR_Z) / 2);  // frame strike -> far end of the board
-
-scene.add(new THREE.AmbientLight(0x9fb4e0, 0.65));
-const key = new THREE.DirectionalLight(0xffffff, 1.0);
-key.position.set(-4, 9, 6); scene.add(key);
-
-// board + faint lane tints + side rails
-const boardLen = STRIKE_Z - FAR_Z + 3;
-const boardCz = (STRIKE_Z + FAR_Z) / 2 - 1;
-const board = new THREE.Mesh(
-  new THREE.PlaneGeometry(BOARD_W, boardLen),
-  new THREE.MeshStandardMaterial({ color:0x10141f, roughness:0.95 }));
-board.rotation.x = -Math.PI / 2; board.position.set(0, 0, boardCz); scene.add(board);
-
-for (let i = 0; i < 4; i++) {
-  const tint = new THREE.Mesh(
-    new THREE.PlaneGeometry(LANE_W * 0.94, boardLen),
-    new THREE.MeshBasicMaterial({ color:COL[LANES[i]], transparent:true, opacity:0.07 }));
-  tint.rotation.x = -Math.PI / 2; tint.position.set(laneX(i), 0.005, boardCz); scene.add(tint);
-}
-for (let i = 0; i <= 4; i++) {            // lane separators
-  const ln = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.03, boardLen),
-    new THREE.MeshBasicMaterial({ color:0x2a3346 }));
-  ln.rotation.x = -Math.PI / 2; ln.position.set((i - 2) * LANE_W, 0.01, boardCz); scene.add(ln);
-}
-
-// strikeline + lane target pads + kick target bar
-const strike = new THREE.Mesh(
-  new THREE.BoxGeometry(BOARD_W + 0.1, 0.06, 0.16),
-  new THREE.MeshStandardMaterial({ color:0xeef3ff, emissive:0xbcd2ff, emissiveIntensity:0.7 }));
-strike.position.set(0, 0.04, STRIKE_Z); scene.add(strike);
-
-for (let i = 0; i < 4; i++) {
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.30, 0.46, 28),
-    new THREE.MeshStandardMaterial({ color:COL[LANES[i]], emissive:COL[LANES[i]],
-      emissiveIntensity:0.25, side:THREE.DoubleSide }));
-  ring.rotation.x = -Math.PI / 2; ring.position.set(laneX(i), 0.03, STRIKE_Z);
-  scene.add(ring); targets.push({ mesh:ring, flash:0 });
-}
-kickTarget = new THREE.Mesh(
-  new THREE.BoxGeometry(BOARD_W, 0.05, 0.12),
-  new THREE.MeshStandardMaterial({ color:COL.kick, emissive:COL.kick, emissiveIntensity:0.18 }));
-kickTarget.position.set(0, 0.015, STRIKE_Z + 0.16); scene.add(kickTarget);
-kickTarget.userData.flash = 0;
-
-// shared geometries
-const GEO = {
-  tom: new THREE.BoxGeometry(0.82, 0.34, 0.40),
-  cym: new THREE.CylinderGeometry(0.46, 0.46, 0.13, 24),
-  kick: new THREE.BoxGeometry(BOARD_W * 0.98, 0.16, 0.30),
-  beat: new THREE.PlaneGeometry(BOARD_W, 0.04),
+  songinfo:$('songinfo'), bpmOut:$('bpmOut'), beatsOut:$('beatsOut'), barsOut:$('barsOut'),
+  tempo_mult:$('tempo_mult'), tempo_hint:$('tempo_hint'), hintOut:$('hintOut'),
+  beats_per_bar:$('beats_per_bar'), phaseShift:$('phaseShift'), reanalyze:$('reanalyze'),
+  sectionCount:$('sectionCount'), sectionList:$('sectionList'), diag:$('diag'),
+  highway:$('highway'), play:$('play'), click:$('click'), clock:$('clock'), status:$('status'),
+  tl:$('tl'),
 };
 
-function laneIndex(lane) { return LANES.indexOf(lane); }
+// section palette by label letter
+const SECT_COLORS = ['#3a82f6','#33c66b','#f2c83f','#e6549a','#ff8c2e','#9b6cf2','#37d6d0','#e6394a'];
+const sectColor = (label) => SECT_COLORS[(label.charCodeAt(0) - 65) % SECT_COLORS.length];
 
-function buildScene(p) {
-  if (noteGroup) { scene.remove(noteGroup); disposeGroup(noteGroup); }
-  noteGroup = new THREE.Group(); scene.add(noteGroup);
-
-  // beat / downbeat lines
-  const downset = new Set((p.downbeats || []).map((t) => Math.round(t * 1000)));
-  for (const t of p.beats || []) {
-    const down = downset.has(Math.round(t * 1000));
-    const m = new THREE.Mesh(GEO.beat, new THREE.MeshBasicMaterial({
-      color: down ? 0x5b6e92 : 0x2c3550, transparent:true, opacity: down ? 0.9 : 0.5 }));
-    m.rotation.x = -Math.PI / 2; m.position.set(0, 0.008, STRIKE_Z - t * SPEED);
-    noteGroup.add(m);
-  }
-
-  // notes
-  for (const n of p.notes) {
-    const z = STRIKE_Z - n.t * SPEED;
-    let mesh;
-    if (n.lane === 'kick') {
-      mesh = new THREE.Mesh(GEO.kick, mat(COL.kick, n));
-      mesh.position.set(0, 0.06, z);
-    } else {
-      const c = COL[n.lane];
-      mesh = new THREE.Mesh(n.cymbal ? GEO.cym : GEO.tom, mat(c, n));
-      mesh.position.set(laneX(laneIndex(n.lane)), n.cymbal ? 0.27 : 0.21, z);
-      if (n.dyn === 'ghost') mesh.scale.setScalar(0.66);
-      else if (n.dyn === 'accent') mesh.scale.setScalar(1.14);
-    }
-    mesh.userData.note = n; n.fired = false;
-    noteGroup.add(mesh);
-  }
-}
-
-function mat(color, n) {
-  const ghost = n.dyn === 'ghost';
-  return new THREE.MeshStandardMaterial({
-    color, emissive:color, emissiveIntensity: n.dyn === 'accent' ? 0.85 : 0.4,
-    roughness:0.45, metalness: n.cymbal ? 0.6 : 0.15,
-    transparent:ghost, opacity: ghost ? 0.5 : 1.0,
-  });
-}
-
-function disposeGroup(g) {
-  g.traverse((o) => { if (o.material) o.material.dispose(); });
-}
-
-function resize() {
-  const w = el.highway.clientWidth, h = el.highway.clientHeight;
-  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
-}
-window.addEventListener('resize', resize);
+let data = null;          // last analysis payload
+let duration = 0;
+let phase = 0, bpb = 4;   // current downbeat phase / beats-per-bar
 
 // ============================================================================
-//  Audio + drum overlay
+//  Audio (full song) + metronome click
 // ============================================================================
-const audio = new Audio();
+const audio = new Audio('/api/audio');
 audio.preload = 'auto';
 let actx = null;
-function ensureCtx() { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); return actx; }
-
-audio.addEventListener('seeked', resetFired);
+const ensureCtx = () => (actx ||= new (window.AudioContext || window.webkitAudioContext)());
 audio.addEventListener('play', () => { el.play.textContent = '⏸ Pause'; ensureCtx().resume(); });
 audio.addEventListener('pause', () => { el.play.textContent = '▶ Play'; });
 audio.addEventListener('ended', () => { el.play.textContent = '▶ Play'; });
 
-function resetFired() {
-  if (!preview) return;
-  const c = audio.currentTime;
-  for (const n of preview.notes) n.fired = n.t < c - 0.02;
-}
-
-let noiseBuf = null;
-function noise() {
-  const ctx = ensureCtx();
-  if (!noiseBuf) {
-    noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.4, ctx.sampleRate);
-    const d = noiseBuf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  }
-  const s = ctx.createBufferSource(); s.buffer = noiseBuf; return s;
-}
-function env(node, t0, peak, dur) {
-  const g = ensureCtx().createGain();
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(peak, t0 + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  node.connect(g); g.connect(ensureCtx().destination); return g;
-}
-function playHit(n) {
-  const ctx = ensureCtx(), t0 = ctx.currentTime, vel = (n.vel || 90) / 127;
-  if (n.lane === 'kick') {
-    const o = ctx.createOscillator(); o.type = 'sine';
-    o.frequency.setValueAtTime(150, t0); o.frequency.exponentialRampToValueAtTime(52, t0 + 0.11);
-    env(o, t0, 0.9 * vel, 0.14); o.start(t0); o.stop(t0 + 0.16);
-  } else if (n.cymbal) {                                  // hi-hat / cymbal
-    const s = noise(), f = ctx.createBiquadFilter();
-    f.type = 'highpass'; f.frequency.value = 7000; s.connect(f);
-    env(f, t0, 0.35 * vel, n.lane === 'yellow' ? 0.05 : 0.3); s.start(t0); s.stop(t0 + 0.4);
-  } else if (n.lane === 'red') {                          // snare
-    const s = noise(), f = ctx.createBiquadFilter();
-    f.type = 'bandpass'; f.frequency.value = 1900; f.Q.value = 0.7; s.connect(f);
-    env(f, t0, 0.6 * vel, 0.13); s.start(t0); s.stop(t0 + 0.2);
-    const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = 190;
-    env(o, t0, 0.3 * vel, 0.09); o.start(t0); o.stop(t0 + 0.1);
-  } else {                                                // toms (blue/green)
-    const o = ctx.createOscillator(); o.type = 'sine';
-    const base = n.lane === 'blue' ? 220 : 150;
-    o.frequency.setValueAtTime(base, t0); o.frequency.exponentialRampToValueAtTime(base * 0.7, t0 + 0.12);
-    env(o, t0, 0.6 * vel, 0.16); o.start(t0); o.stop(t0 + 0.18);
-  }
+function click(strong) {
+  if (!el.click.checked) return;
+  const ctx = ensureCtx(), t = ctx.currentTime;
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.frequency.value = strong ? 1600 : 900;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(strong ? 0.5 : 0.28, t + 0.002);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+  o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.06);
 }
 
 // ============================================================================
-//  Animation
+//  Highway (Three.js) — beat/bar lines + section tint scrolling to a strikeline
 // ============================================================================
-function tick() {
-  requestAnimationFrame(tick);
+const BOARD_W = 4.2, SPEED = 6.0, STRIKE_Z = 3.5, LOOKAHEAD = 3.5, PAST = 0.5;
+const FAR_Z = STRIKE_Z - LOOKAHEAD * SPEED;
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+el.highway.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0c0e14);
+const CAM = { y:6.0, z:STRIKE_Z + 5.2 };
+const FAR_DIST = Math.hypot(CAM.z - FAR_Z, CAM.y);
+scene.fog = new THREE.Fog(0x0c0e14, FAR_DIST * 0.5, FAR_DIST + 6);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
+camera.position.set(0, CAM.y, CAM.z);
+camera.lookAt(0, 0, (STRIKE_Z + FAR_Z) / 2);
+scene.add(new THREE.AmbientLight(0x9fb4e0, 0.8));
+
+const boardLen = STRIKE_Z - FAR_Z + 3, boardCz = (STRIKE_Z + FAR_Z) / 2 - 1;
+const board = new THREE.Mesh(new THREE.PlaneGeometry(BOARD_W, boardLen),
+  new THREE.MeshBasicMaterial({ color:0x10141f }));
+board.rotation.x = -Math.PI / 2; board.position.set(0, 0, boardCz); scene.add(board);
+const strike = new THREE.Mesh(new THREE.BoxGeometry(BOARD_W + 0.2, 0.05, 0.18),
+  new THREE.MeshBasicMaterial({ color:0xbcd2ff }));
+strike.position.set(0, 0.04, STRIKE_Z); scene.add(strike);
+
+const GEO_BEAT = new THREE.PlaneGeometry(BOARD_W, 0.05);
+const GEO_BAR = new THREE.PlaneGeometry(BOARD_W + 0.12, 0.10);
+let gridGroup = null;
+
+function buildHighway(d) {
+  if (gridGroup) { scene.remove(gridGroup); gridGroup.traverse(o => o.material && o.material.dispose()); }
+  gridGroup = new THREE.Group(); scene.add(gridGroup);
+
+  // section-colored board segments
+  for (const s of d.sections) {
+    const len = (s.end - s.start) * SPEED;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(BOARD_W, Math.max(0.01, len)),
+      new THREE.MeshBasicMaterial({ color:new THREE.Color(sectColor(s.label)), transparent:true, opacity:0.10 }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(0, 0.005, STRIKE_Z - (s.start + s.end) / 2 * SPEED);
+    m.userData.span = [s.start, s.end]; gridGroup.add(m);
+  }
+  const downset = new Set(d.downbeats.map(t => Math.round(t * 1000)));
+  for (const t of d.beats) {
+    const down = downset.has(Math.round(t * 1000));
+    const m = new THREE.Mesh(down ? GEO_BAR : GEO_BEAT, new THREE.MeshBasicMaterial({
+      color: down ? 0x7d93c4 : 0x33415e, transparent:true, opacity: down ? 1 : 0.7 }));
+    m.rotation.x = -Math.PI / 2; m.position.set(0, 0.02, STRIKE_Z - t * SPEED);
+    m.userData.t = t; gridGroup.add(m);
+  }
+  beatCursor = 0;
+}
+
+let beatCursor = 0;  // next beat index to click
+function animate() {
+  requestAnimationFrame(animate);
   const c = audio.currentTime || 0;
-  if (noteGroup) noteGroup.position.z = c * SPEED;
-
-  // fire hits (visual flash + audio overlay) as notes cross the strike
-  if (preview && !audio.paused) {
-    for (const n of preview.notes) {
-      if (!n.fired && c >= n.t) {
-        n.fired = true;
-        if (c - n.t < 0.25) {
-          if (el.overlay.checked) playHit(n);
-          if (n.lane === 'kick') kickTarget.userData.flash = 1;
-          else { const ti = targets[laneIndex(n.lane)]; if (ti) ti.flash = 1; }
-        }
-      }
+  if (gridGroup) {
+    gridGroup.position.z = c * SPEED;
+    for (const o of gridGroup.children) {
+      if (o.userData.t != null) { const dz = o.userData.t - c; o.visible = dz < LOOKAHEAD && dz > -PAST; }
+      else if (o.userData.span) { const [a,b] = o.userData.span; o.visible = b - c > -PAST && a - c < LOOKAHEAD; }
     }
   }
-  // decay flashes + cull far/old notes
-  for (const t of targets) {
-    t.flash = Math.max(0, t.flash - 0.06);
-    t.mesh.material.emissiveIntensity = 0.25 + t.flash * 1.4;
-    t.mesh.scale.setScalar(1 + t.flash * 0.18);
-  }
-  kickTarget.userData.flash = Math.max(0, kickTarget.userData.flash - 0.06);
-  kickTarget.material.emissiveIntensity = 0.18 + kickTarget.userData.flash * 1.2;
-
-  if (noteGroup) {
-    for (const o of noteGroup.children) {
-      const n = o.userData.note; if (!n) continue;
-      const dz = n.t - c;                    // seconds until hit (>0 = upcoming)
-      o.visible = dz < LOOKAHEAD && dz > -PAST;  // show the whole approach, not just imminent
+  // metronome: fire clicks for beats we just crossed
+  if (data && !audio.paused) {
+    while (beatCursor < data.beats.length && data.beats[beatCursor] <= c) {
+      const t = data.beats[beatCursor];
+      if (c - t < 0.2) click(((beatCursor - phase) % bpb + bpb) % bpb === 0);
+      beatCursor++;
     }
   }
-  el.clock.textContent = c.toFixed(1) + 's';
+  el.clock.textContent = fmt(c);
+  drawTimeline(c);
   renderer.render(scene, camera);
 }
+function resizeHighway() {
+  const w = el.highway.clientWidth, h = el.highway.clientHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
 
 // ============================================================================
-//  Controls + preview fetching
+//  DAW timeline (2D canvas)
 // ============================================================================
-function fmtTime(s) { const m = Math.floor(s / 60); return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`; }
+const tl = el.tl, ctx2d = tl.getContext('2d');
+let view = { start:0, end:1 };   // visible time range (seconds)
+let tlW = 0, tlH = 0, dpr = 1;
 
-let patternsLoaded = false;
-function populatePatterns(patterns) {
-  if (patternsLoaded || !patterns || !patterns.length) return;
-  el.pattern.innerHTML = '';
-  for (const p of patterns) {
-    const o = document.createElement('option');
-    o.value = p.name; o.textContent = `[${p.genre}] ${p.name}`;
-    o.dataset.desc = p.description || '';
-    el.pattern.appendChild(o);
+function resizeTimeline() {
+  dpr = Math.min(window.devicePixelRatio, 2);
+  tlW = tl.clientWidth; tlH = tl.clientHeight;
+  tl.width = Math.round(tlW * dpr); tl.height = Math.round(tlH * dpr);
+  ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+const tToX = (t) => (t - view.start) / (view.end - view.start) * tlW;
+const xToT = (x) => view.start + x / tlW * (view.end - view.start);
+
+const SECT_H = 24, TEMPO_H = 34;
+function drawTimeline(playT) {
+  if (!data || !tlW) return;
+  const ctx = ctx2d;
+  ctx.clearRect(0, 0, tlW, tlH);
+  const waveTop = SECT_H, waveBot = tlH - TEMPO_H, waveH = waveBot - waveTop, mid = (waveTop + waveBot) / 2;
+
+  // sections band
+  for (const s of data.sections) {
+    const x0 = tToX(s.start), x1 = tToX(s.end);
+    if (x1 < 0 || x0 > tlW) continue;
+    ctx.fillStyle = sectColor(s.label) + '33';
+    ctx.fillRect(x0, 0, x1 - x0, SECT_H);
+    ctx.fillStyle = sectColor(s.label);
+    ctx.fillRect(x0, 0, 2, SECT_H);
+    ctx.fillStyle = '#e7ecf5'; ctx.font = '11px ui-sans-serif'; ctx.textBaseline = 'middle';
+    if (x1 - x0 > 16) ctx.fillText(s.label, x0 + 6, SECT_H / 2);
   }
-  patternsLoaded = true;
-}
 
-function syncControls() {
-  if (!settings) return;
-  el.mode.value = settings.mode || 'detect';
-  if (settings.pattern) el.pattern.value = settings.pattern;
-  el.kick_from_audio.checked = !!settings.kick_from_audio;
-  el.engine.value = settings.engine || 'baseline';
-  el.separation.value = settings.separation;
-  el.subdivisions.value = String(settings.subdivisions);
-  el.tempo_mult.value = String(settings.tempo_mult ?? 1);
-  el.dynamics.checked = !!settings.dynamics;
-  el.double_kick.checked = !!settings.double_kick;
-  el.tom_split.checked = !!settings.tom_split;
-  for (const k of SLIDERS) { el[k].value = settings[k]; $(SLIDER_OUT[k]).textContent = (+settings[k]).toFixed(SLIDER_DP[k]); }
-  updateEngineUI();
-  updateModeUI();
-}
-function readControls() {
-  const s = { ...settings };
-  s.mode = el.mode.value;
-  s.pattern = el.pattern.value;
-  s.kick_from_audio = el.kick_from_audio.checked;
-  s.engine = el.engine.value;
-  s.separation = el.separation.value;
-  s.subdivisions = +el.subdivisions.value;
-  s.tempo_mult = +el.tempo_mult.value;
-  s.dynamics = el.dynamics.checked;
-  s.double_kick = el.double_kick.checked;
-  s.tom_split = el.tom_split.checked;
-  for (const k of SLIDERS) s[k] = +el[k].value;
-  return s;
-}
+  // waveform
+  const wf = data.waveform, bt = duration / wf.length;
+  ctx.strokeStyle = '#2f3b54'; ctx.beginPath();
+  for (let px = 0; px <= tlW; px++) {
+    const t = xToT(px), i = Math.floor(t / bt);
+    if (i < 0 || i >= wf.length) continue;
+    const a = wf[i] * waveH * 0.48;
+    ctx.moveTo(px, mid - a); ctx.lineTo(px, mid + a);
+  }
+  ctx.stroke();
 
-// Show the tuning knobs that actually apply to the chosen engine: DrumSep self-
-// separates (band-energy knobs + Separation don't apply), the baseline uses them.
-function updateEngineUI() {
-  const drumsep = el.engine.value === 'drumsep';
-  el.baselineGroup.style.opacity = drumsep ? 0.4 : 1;
-  el.separation.disabled = drumsep;
-  el.bandTuning.style.display = drumsep ? 'none' : '';
-  el.drumsepTuning.style.display = drumsep ? '' : 'none';
-  if (drumsep && preview && preview.drumsepAvailable === false) {
-    el.engineHint.innerHTML =
-      'DrumSep weights not found — runs as <b>baseline</b>. Install:<br>' +
-      '<code>pip install demucs gdown</code> then download the model to ' +
-      '<code>model/drumsep.th</code>.';
-  } else if (drumsep) {
-    el.engineHint.innerHTML = 'Per-drum-stem separation — slower (~10 s / window), much truer lanes.';
-  } else {
-    el.engineHint.textContent = '';
+  // beats + bars
+  const downset = new Set(data.downbeats.map(t => Math.round(t * 1000)));
+  const spacingOk = (view.end - view.start) / tlW < 0.06;  // hide beat ticks when too dense
+  let bar = 0;
+  for (const t of data.beats) {
+    const x = tToX(t); if (x < -2 || x > tlW + 2) { continue; }
+    const down = downset.has(Math.round(t * 1000));
+    if (down) {
+      ctx.strokeStyle = '#7d93c4'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, waveTop); ctx.lineTo(x, waveBot); ctx.stroke();
+      ctx.fillStyle = '#5d6781'; ctx.font = '9px ui-monospace';
+      ctx.fillText(String(++bar), x + 2, waveTop + 8);
+    } else if (spacingOk) {
+      ctx.strokeStyle = '#222c41'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, mid - waveH * 0.3); ctx.lineTo(x, mid + waveH * 0.3); ctx.stroke();
+    }
+  }
+
+  // tempo curve strip
+  const ty = tlH - TEMPO_H, tc = data.tempoCurve;
+  ctx.fillStyle = '#0e1320'; ctx.fillRect(0, ty, tlW, TEMPO_H);
+  if (tc.length) {
+    let lo = Infinity, hi = -Infinity;
+    for (const p of tc) { lo = Math.min(lo, p.bpm); hi = Math.max(hi, p.bpm); }
+    const pad = Math.max(4, (hi - lo) * 0.15); lo -= pad; hi += pad;
+    ctx.strokeStyle = '#37e0a6'; ctx.lineWidth = 1.5; ctx.beginPath();
+    let started = false;
+    for (const p of tc) {
+      const x = tToX(p.t); if (x < 0 || x > tlW) { started = false; continue; }
+      const y = ty + TEMPO_H - (p.bpm - lo) / (hi - lo) * TEMPO_H;
+      started ? ctx.lineTo(x, y) : ctx.moveTo(x, y); started = true;
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#5d6781'; ctx.font = '9px ui-monospace';
+    ctx.fillText(`${Math.round(hi)} bpm`, 4, ty + 9);
+    ctx.fillText(`${Math.round(lo)}`, 4, ty + TEMPO_H - 3);
+  }
+
+  // playhead
+  const px = tToX(playT);
+  if (px >= 0 && px <= tlW) {
+    ctx.strokeStyle = '#bcd2ff'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, tlH); ctx.stroke();
   }
 }
 
-// Pattern mode tiles a template across the window; the ADT engine/tuning groups
-// don't apply, so swap them for the Pattern panel.
-function updateModeUI() {
-  const pattern = el.mode.value === 'pattern';
-  el.patternGroup.style.display = pattern ? '' : 'none';
-  el.engineGroup.style.display = pattern ? 'none' : '';
-  el.baselineGroup.style.display = pattern ? 'none' : '';
-  if (pattern) {
-    el.bandTuning.style.display = 'none';
-    el.drumsepTuning.style.display = 'none';
-  } else {
-    updateEngineUI();  // restore band/drumsep tuning per the chosen engine
-  }
-  const opt = el.pattern.selectedOptions[0];
-  el.patternDesc.textContent = opt ? (opt.dataset.desc || '') : '';
+// timeline interactions: click seeks, wheel zooms, drag pans
+let dragging = false, dragX = 0, dragStart = null, moved = false;
+tl.addEventListener('pointerdown', (e) => { dragging = true; moved = false; dragX = e.offsetX; dragStart = { ...view }; });
+window.addEventListener('pointerup', () => {
+  if (dragging && !moved) seek(xToT(dragX));
+  dragging = false;
+});
+window.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const dx = e.offsetX - dragX; if (Math.abs(dx) > 3) moved = true;
+  const span = dragStart.end - dragStart.start, dt = -dx / tlW * span;
+  let s = dragStart.start + dt, en = dragStart.end + dt;
+  if (s < 0) { en -= s; s = 0; } if (en > duration) { s -= en - duration; en = duration; }
+  view = { start:Math.max(0, s), end:Math.min(duration, en) };
+});
+tl.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const span = view.end - view.start, f = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+  const ns = Math.min(duration, Math.max(0.5, span * f));
+  const cx = xToT(e.offsetX), r = e.offsetX / tlW;
+  let s = cx - ns * r, en = cx + ns * (1 - r);
+  if (s < 0) { en -= s; s = 0; } if (en > duration) { s -= en - duration; en = duration; }
+  view = { start:Math.max(0, s), end:Math.min(duration, en) };
+}, { passive:false });
+
+function seek(t) {
+  t = Math.max(0, Math.min(duration, t));
+  audio.currentTime = t;
+  beatCursor = data ? data.beats.findIndex(b => b >= t) : 0;
+  if (beatCursor < 0) beatCursor = data ? data.beats.length : 0;
 }
 
+// ============================================================================
+//  Analyze + render
+// ============================================================================
 let busy = false;
-async function doPreview(payload) {
+async function analyze() {
   if (busy) return; busy = true;
-  el.panel.classList.add('busy'); el.status.classList.remove('err');
-  const slow = el.mode.value === 'pattern'
-    ? (el.kick_from_audio.checked ? 'tiling + kick from audio… (~10s)' : 'tiling pattern…')
-    : ((payload.engine === 'drumsep' || el.engine.value === 'drumsep') ? 'separating drums… (~10s)' : 'transcribing…');
-  el.status.textContent = slow;
-  const start = +el.start.value, length = +el.length.value;
+  el.status.textContent = 'analyzing…'; el.status.className = 'status busy';
+  const p = new URLSearchParams({
+    tempo_mult: el.tempo_mult.value, beats_per_bar: el.beats_per_bar.value, phase: String(phase),
+  });
+  if (+el.tempo_hint.value > 0) p.set('tempo_hint', el.tempo_hint.value);
   try {
-    const r = await fetch('/api/preview', {
-      method:'POST', headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ start_s:start, length_s:length, settings:payload }),
-    });
-    const data = await r.json();
-    if (!r.ok || data.error) throw new Error(data.error || ('HTTP ' + r.status));
-    populatePatterns(data.patterns);
-    preview = data; settings = data.settings; syncControls();
-    buildScene(data);
-    audio.pause(); audio.src = data.audioUrl; audio.currentTime = 0; resetFired();
-    showDiag(data);
-    const label = data.mode === 'pattern' ? 'pattern' : (data.engine === 'drumsep' ? 'drumsep' : 'baseline');
-    el.status.textContent = `${label} · ${data.notes.length} notes · ${data.bpm} bpm`;
+    const r = await fetch('/api/analyze?' + p.toString());
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+    data = d; bpb = d.beatsPerBar; phase = d.phase;
+    renderAll(d);
+    el.status.textContent = `${d.analysis.beats} beats · ${d.analysis.sections} sections`;
+    el.status.className = 'status';
   } catch (e) {
-    el.status.textContent = 'error: ' + e.message; el.status.classList.add('err');
-  } finally {
-    busy = false; el.panel.classList.remove('busy');
-  }
-}
-// Genre resets the band-energy knobs to a preset, but keep the chosen engine.
-const previewGenre = (g) => doPreview({ genre:g, engine: el.engine.value });
-const previewTuned = () => doPreview(readControls());
-
-function showDiag(d) {
-  const g = d.diagnostics, lanes = {};
-  for (const n of d.notes) lanes[n.lane] = (lanes[n.lane] || 0) + 1;
-  const cym = d.notes.filter((n) => n.cymbal).length;
-  const gl = g.gate.toLowerCase();
-  el.diag.innerHTML =
-    `engine <b>${d.engine}</b>\n` +
-    `gate <span class="${gl}">${g.gate}</span>  rms ${g.drum_rms}\n` +
-    `sep <b>${g.separator}</b>  ·  onsets <b>${g.onsets}</b>\n` +
-    `notes <b>${g.notes}</b>  cymbals <b>${cym}</b>\n` +
-    `lanes ${Object.entries(lanes).map(([k, v]) => `${k}:${v}`).join('  ')}` +
-    (g.warnings.length ? `\n\n⚠ ${g.warnings.slice(0, 4).join('\n⚠ ')}` : '');
+    el.status.textContent = 'error: ' + e.message; el.status.className = 'status err';
+  } finally { busy = false; }
 }
 
-// wire events
-el.start.addEventListener('input', () => { el.startOut.textContent = fmtTime(+el.start.value); });
-el.length.addEventListener('input', () => { el.lenOut.textContent = el.length.value + 's'; });
-el.start.addEventListener('change', previewTuned);
-el.length.addEventListener('change', previewTuned);
-el.shuffle.addEventListener('click', () => {
-  const max = Math.max(0, duration - (+el.length.value));
-  el.start.value = (Math.random() * max).toFixed(1);
-  el.startOut.textContent = fmtTime(+el.start.value); previewTuned();
-});
-el.mode.addEventListener('change', () => { updateModeUI(); previewTuned(); });
-el.pattern.addEventListener('change', () => { updateModeUI(); previewTuned(); });
-el.kick_from_audio.addEventListener('change', previewTuned);
-el.engine.addEventListener('change', () => { updateEngineUI(); previewTuned(); });
-el.genre.addEventListener('change', () => {
-  // Metal/Rock want the per-drum engine — switch to it automatically if available.
-  const g = el.genre.value;
-  if ((g === 'Metal' || g === 'Rock') && preview && preview.drumsepAvailable && el.engine.value !== 'drumsep') {
-    el.engine.value = 'drumsep'; updateEngineUI();
-  }
-  previewGenre(g);
-});
-el.separation.addEventListener('change', previewTuned);
-el.subdivisions.addEventListener('change', previewTuned);
-el.tempo_mult.addEventListener('change', previewTuned);
-el.dynamics.addEventListener('change', previewTuned);
-el.double_kick.addEventListener('change', previewTuned);
-el.tom_split.addEventListener('change', previewTuned);
-for (const k of SLIDERS) {
-  el[k].addEventListener('input', () => { $(SLIDER_OUT[k]).textContent = (+el[k].value).toFixed(SLIDER_DP[k]); });
-  el[k].addEventListener('change', previewTuned);
+function renderAll(d) {
+  if (view.end <= view.start || view.end > duration + 0.5) view = { start:0, end:duration };
+  el.bpmOut.textContent = d.bpm; el.beatsOut.textContent = d.analysis.beats; el.barsOut.textContent = d.analysis.downbeats;
+  el.sectionCount.textContent = `${d.sections.length} found`;
+  el.sectionList.innerHTML = '';
+  d.sections.forEach((s) => {
+    const row = document.createElement('div'); row.className = 'sectionRow';
+    row.innerHTML = `<span class="swatch" style="background:${sectColor(s.label)}"></span>` +
+      `<span class="lab">${s.label}</span><span>${fmt(s.start)}</span>` +
+      `<span class="tm">${(s.end - s.start).toFixed(0)}s</span>`;
+    row.onclick = () => seek(s.start);
+    el.sectionList.appendChild(row);
+  });
+  el.diag.textContent = `raw ${d.analysis.rawBpm} → ${d.bpm} bpm (×${d.tempoMult})\n` +
+    `${bpb}/4 · phase ${phase} · drift ${tempoRange(d)}`;
+  buildHighway(d);
 }
-el.repreview.addEventListener('click', previewTuned);
+function tempoRange(d) {
+  if (!d.tempoCurve.length) return '—';
+  let lo = Infinity, hi = -Infinity;
+  for (const p of d.tempoCurve) { lo = Math.min(lo, p.bpm); hi = Math.max(hi, p.bpm); }
+  return `${lo.toFixed(0)}–${hi.toFixed(0)}`;
+}
+
+// ============================================================================
+//  Controls
+// ============================================================================
+const fmt = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60); const r = (s % 60); return `${m}:${r.toFixed(1).padStart(4, '0')}`; };
+
+el.tempo_mult.addEventListener('change', analyze);
+el.beats_per_bar.addEventListener('change', () => { phase = 0; analyze(); });
+el.tempo_hint.addEventListener('input', () => { el.hintOut.textContent = +el.tempo_hint.value > 0 ? el.tempo_hint.value : 'auto'; });
+el.tempo_hint.addEventListener('change', analyze);
+el.phaseShift.addEventListener('click', () => { phase = (phase + 1) % bpb; analyze(); });
+el.reanalyze.addEventListener('click', analyze);
 el.play.addEventListener('click', () => { if (audio.paused) audio.play(); else audio.pause(); });
+window.addEventListener('resize', () => { resizeHighway(); resizeTimeline(); });
 
 // ============================================================================
 //  Init
 // ============================================================================
 async function init() {
-  resize(); tick();
-  // Load the pattern library up front so the dropdown is never empty, even if
-  // the first preview is slow or fails.
-  try {
-    const pj = await (await fetch('/api/patterns')).json();
-    populatePatterns(pj.patterns);
-  } catch (e) { /* preview will populate as a fallback */ }
+  resizeHighway(); resizeTimeline(); animate();
   try {
     const meta = await (await fetch('/api/meta')).json();
-    duration = meta.duration_s || 60;
-    el.songinfo.textContent = `${meta.name} — ${meta.artist} · ${fmtTime(duration)}`;
-    el.start.max = Math.max(1, duration - (+el.length.value)).toFixed(1);
-    // start somewhere with drums (skip a possible intro), then first preview
-    el.start.value = Math.min(40, Math.max(0, duration * 0.25)).toFixed(1);
-    el.startOut.textContent = fmtTime(+el.start.value);
-    el.lenOut.textContent = el.length.value + 's';
+    duration = meta.duration_s || 60; view = { start:0, end:duration };
+    el.songinfo.textContent = `${meta.name} — ${meta.artist} · ${fmt(duration)}`;
   } catch (e) { el.songinfo.textContent = 'could not load song meta'; }
-  await previewGenre(el.genre.value);
+  await analyze();
 }
 init();

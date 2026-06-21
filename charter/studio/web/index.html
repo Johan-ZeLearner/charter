@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>charter studio</title>
+  <title>charter studio — beat grid</title>
   <link rel="stylesheet" href="/styles.css" />
   <script type="importmap">
     { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
@@ -18,122 +18,43 @@
       </header>
 
       <section class="group">
-        <h3>Window <small>preview anywhere in the tune</small></h3>
-        <label>Start <output id="startOut">0:00</output>
-          <input id="start" type="range" min="0" max="100" value="0" step="0.1" />
-        </label>
-        <label>Length <output id="lenOut">16s</output>
-          <input id="length" type="range" min="8" max="20" value="16" step="1" />
-        </label>
-        <button id="shuffle" class="ghost">🎲 jump somewhere</button>
-      </section>
-
-      <section class="group">
-        <h3>Mode</h3>
-        <label>How to chart this window
-          <select id="mode">
-            <option value="detect" selected>Detect — transcribe from audio (ADT)</option>
-            <option value="pattern">Pattern — apply a genre template</option>
-          </select>
-        </label>
-        <div class="hint">On dense material (metal) ADT smears. Pattern tiles a known groove across the window's bars instead — set the window to a section, pick a groove.</div>
-      </section>
-
-      <section class="group" id="patternGroup" style="display:none">
-        <h3>Pattern <small>genre template</small></h3>
-        <label>Groove
-          <select id="pattern"></select>
-        </label>
-        <div id="patternDesc" class="hint"></div>
-        <label class="chk"><input id="kick_from_audio" type="checkbox" checked /> kick from audio (real double bass, template voicing)</label>
-      </section>
-
-      <section class="group" id="engineGroup">
-        <h3>Engine</h3>
-        <label>ADT engine
-          <select id="engine">
-            <option value="baseline" selected>Baseline — band energy (fast)</option>
-            <option value="drumsep">DrumSep — per-drum stems (quality)</option>
-          </select>
-        </label>
-        <div id="engineHint" class="hint"></div>
-      </section>
-
-      <section class="group" id="baselineGroup">
-        <h3>Music type</h3>
-        <label>Genre preset
-          <select id="genre">
-            <option>Default</option>
-            <option>Electronic</option>
-            <option>Rock</option>
-            <option selected>Metal</option>
-            <option>Pop</option>
-            <option>Acoustic / Jazz</option>
-          </select>
-        </label>
-        <label>Separation
-          <select id="separation">
-            <option value="hpss">HPSS (fast, electronic)</option>
-            <option value="passthrough">None (raw mix)</option>
-            <option value="auto">Demucs auto (slow)</option>
-            <option value="demucs">Demucs (slow)</option>
-          </select>
-        </label>
-      </section>
-
-      <section class="group">
-        <h3>Timing <small>fixes most metal issues</small></h3>
+        <h3>Beat grid <small>the foundation</small></h3>
+        <div class="readout">
+          <div><b id="bpmOut">—</b><span>median BPM</span></div>
+          <div><b id="beatsOut">—</b><span>beats</span></div>
+          <div><b id="barsOut">—</b><span>bars</span></div>
+        </div>
         <label>Tempo
           <select id="tempo_mult">
-            <option value="0.5">×½ (halve — if too fast)</option>
+            <option value="0.5">×½ (halve)</option>
             <option value="1" selected>×1 (as detected)</option>
-            <option value="2">×2 (double — fast metal)</option>
+            <option value="2">×2 (double)</option>
           </select>
         </label>
-        <div class="hint">If the BPM readout is HALF your song's real tempo, set ×2 — that's the #1 cause of missing double bass.</div>
-        <label>Grid
-          <select id="subdivisions">
-            <option value="2">1/8</option>
-            <option value="4" selected>1/16</option>
-            <option value="8">1/32 (fast double bass)</option>
-            <option value="3">1/8 triplet</option>
-            <option value="6">1/16 triplet</option>
+        <div class="hint">If the click drifts off the beat or the BPM looks halved/doubled, fix it here first — everything snaps to this grid.</div>
+        <label>Tempo hint (BPM, optional) <output id="hintOut">auto</output>
+          <input id="tempo_hint" type="range" min="0" max="260" value="0" step="1" />
+        </label>
+        <label>Beats per bar
+          <select id="beats_per_bar">
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
           </select>
         </label>
         <div class="row">
-          <label class="chk"><input id="dynamics" type="checkbox" /> dynamics</label>
-          <label class="chk"><input id="double_kick" type="checkbox" /> 2× kick</label>
-          <label class="chk"><input id="tom_split" type="checkbox" checked /> tom split</label>
+          <button id="phaseShift" class="ghost">⇄ shift downbeat</button>
+          <button id="reanalyze" class="primary">↻ Re-analyze</button>
         </div>
       </section>
 
-      <section class="group" id="drumsepTuning">
-        <h3>DrumSep tuning <small>per-drum</small></h3>
-        <label>Kick gap — lower catches faster double bass <output id="kickGapOut"></output>
-          <input id="kick_gap_s" type="range" min="0.018" max="0.060" step="0.002" />
-        </label>
-        <label>Snare amount — higher = fewer snares <output id="snareGateOut"></output>
-          <input id="snare_gate" type="range" min="0.06" max="0.30" step="0.01" />
-        </label>
+      <section class="group">
+        <h3>Sections <small id="sectionCount"></small></h3>
+        <div id="sectionList" class="sectionList"></div>
       </section>
 
-      <section class="group" id="bandTuning">
-        <h3>Baseline tuning <small>band energy</small></h3>
-        <label>Onset sensitivity <output id="onsetOut"></output>
-          <input id="onset_delta" type="range" min="0.02" max="0.25" step="0.005" />
-        </label>
-        <label>Kick gate (raise to reject bass) <output id="kickOut"></output>
-          <input id="kick_low_ratio" type="range" min="0.15" max="0.6" step="0.01" />
-        </label>
-        <label>Snare gate <output id="snareOut"></output>
-          <input id="snare_mid_ratio" type="range" min="0.08" max="0.4" step="0.01" />
-        </label>
-        <label>Hi-hat gate (lower to find hats) <output id="hatOut"></output>
-          <input id="hat_vhigh_ratio" type="range" min="0.1" max="0.6" step="0.01" />
-        </label>
-      </section>
-
-      <button id="repreview" class="primary">↻ Re-preview</button>
       <div id="diag" class="diag"></div>
     </aside>
 
@@ -141,9 +62,12 @@
       <div id="highway"></div>
       <div id="transport">
         <button id="play" class="primary">▶ Play</button>
-        <label class="chk"><input id="overlay" type="checkbox" checked /> 🔊 drum overlay</label>
-        <span id="clock" class="clock">0.0s</span>
+        <label class="chk"><input id="click" type="checkbox" checked /> 🔊 metronome</label>
+        <span id="clock" class="clock">0:00.0</span>
         <span id="status" class="status"></span>
+      </div>
+      <div id="timeline">
+        <canvas id="tl"></canvas>
       </div>
     </main>
   </div>

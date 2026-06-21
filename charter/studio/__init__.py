@@ -1,26 +1,20 @@
-"""charter studio — a tune-and-preview loop for the audio frontend.
+"""charter studio — a beat-grid & song-structure editor.
 
-The auto-charter's baseline ADT is a pile of thresholds; thresholds are only
-useful if the feedback loop is seconds, not a full-song render. The studio runs
-the pipeline on a short window (10-20 s, anywhere in the tune), returns the
-notes with their times, and a Clone-Hero-style highway renders them in sync with
-the clip audio so the result can be judged by eye and ear — then the settings
-get dialed in per song (docs/01 "AI draft + cleanup", docs/09 review surface).
+Restarted from a simpler base: the goal is to ground the FOUNDATION — an
+accurate, drift-tracking beat grid plus song sections — before anything is built
+on it. Everything downstream (drums, bass, other instrument lines) snaps to this
+grid, so it must be inspectable and correctable first.
 
-This package is the previewer; the OCTAVE-style React/R3F editor is the next
-iteration. The Three.js highway scene ports almost 1:1 into React-Three-Fiber.
+Two views: a Clone-Hero-style highway (judge the beat by eye + metronome click)
+and a DAW-style timeline (waveform + beats/bars + sections + tempo curve).
+
+The previous auto-charter studio (ADT engines, pattern mode) lives on the
+``studio-autocharter-v1`` branch for reference.
 """
 
 from __future__ import annotations
 
-from .presets import DEFAULTS, PRESETS, build_engine, resolve_settings
-from .service import run_preview, song_meta
+from .analyze import analyze_song
+from .service import song_meta
 
-__all__ = [
-    "DEFAULTS",
-    "PRESETS",
-    "build_engine",
-    "resolve_settings",
-    "run_preview",
-    "song_meta",
-]
+__all__ = ["analyze_song", "song_meta"]

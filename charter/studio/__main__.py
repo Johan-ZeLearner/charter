@@ -1,7 +1,8 @@
-"""``python -m charter.studio <audio.mp3> [--port 8765]`` — launch the previewer.
+"""``python -m charter.studio <audio.mp3> [--port 8765]`` — launch the beat-grid studio.
 
-Opens a browser to a Clone-Hero-style highway that previews the auto-charted
-drums for a 10-20 s window, with live settings so you can tune per song.
+Opens a browser to a beat-grid & song-structure editor: a Clone-Hero highway to
+judge the beat (with a metronome click) and a DAW timeline (waveform + beats/bars
++ sections + tempo curve) to inspect and correct the grid.
 """
 
 from __future__ import annotations
