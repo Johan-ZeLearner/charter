@@ -29,6 +29,26 @@
       </section>
 
       <section class="group">
+        <h3>Mode</h3>
+        <label>How to chart this window
+          <select id="mode">
+            <option value="detect" selected>Detect — transcribe from audio (ADT)</option>
+            <option value="pattern">Pattern — apply a genre template</option>
+          </select>
+        </label>
+        <div class="hint">On dense material (metal) ADT smears. Pattern tiles a known groove across the window's bars instead — set the window to a section, pick a groove.</div>
+      </section>
+
+      <section class="group" id="patternGroup" style="display:none">
+        <h3>Pattern <small>genre template</small></h3>
+        <label>Groove
+          <select id="pattern"></select>
+        </label>
+        <div id="patternDesc" class="hint"></div>
+        <label class="chk"><input id="kick_from_audio" type="checkbox" checked /> kick from audio (real double bass, template voicing)</label>
+      </section>
+
+      <section class="group" id="engineGroup">
         <h3>Engine</h3>
         <label>ADT engine
           <select id="engine">
@@ -44,9 +64,9 @@
         <label>Genre preset
           <select id="genre">
             <option>Default</option>
-            <option selected>Electronic</option>
+            <option>Electronic</option>
             <option>Rock</option>
-            <option>Metal</option>
+            <option selected>Metal</option>
             <option>Pop</option>
             <option>Acoustic / Jazz</option>
           </select>

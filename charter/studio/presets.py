@@ -26,6 +26,9 @@ from ..mapping import MapConfig
 
 # The full knob set the UI drives. Defaults reproduce the current baseline.
 DEFAULTS: dict[str, Any] = {
+    "mode": "detect",            # detect (ADT) | pattern (tile a genre template)
+    "pattern": "",               # pattern name (pattern mode)
+    "kick_from_audio": True,     # pattern mode: take kick from audio, voicing from template
     "engine": "baseline",        # baseline | drumsep (per-drum-stem, quality)
     "separation": "hpss",        # hpss | passthrough | demucs | auto (baseline engine)
     "onset_delta": 0.06,         # peak-pick threshold (higher = fewer onsets)
@@ -124,6 +127,9 @@ def resolve_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
               "tempo_mult", "kick_gap_s", "snare_gate"):
         out[f] = float(out[f])
     out["tempo_mult"] = max(0.25, min(4.0, out["tempo_mult"]))
+    out["kick_from_audio"] = bool(out["kick_from_audio"])
+    if out["mode"] not in ("detect", "pattern"):
+        out["mode"] = "detect"
     if out["engine"] not in ("baseline", "drumsep"):
         out["engine"] = "baseline"
     out["_genre"] = genre or "Default"

@@ -22,7 +22,9 @@ const $ = (id) => document.getElementById(id);
 const el = {
   panel:$('panel'), highway:$('highway'), songinfo:$('songinfo'), diag:$('diag'),
   start:$('start'), startOut:$('startOut'), length:$('length'), lenOut:$('lenOut'),
-  shuffle:$('shuffle'), engine:$('engine'), engineHint:$('engineHint'),
+  shuffle:$('shuffle'), mode:$('mode'), patternGroup:$('patternGroup'),
+  pattern:$('pattern'), patternDesc:$('patternDesc'), kick_from_audio:$('kick_from_audio'),
+  engineGroup:$('engineGroup'), engine:$('engine'), engineHint:$('engineHint'),
   baselineGroup:$('baselineGroup'), genre:$('genre'), separation:$('separation'),
   subdivisions:$('subdivisions'), tempo_mult:$('tempo_mult'),
   dynamics:$('dynamics'), double_kick:$('double_kick'),
@@ -281,8 +283,24 @@ function tick() {
 // ============================================================================
 function fmtTime(s) { const m = Math.floor(s / 60); return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`; }
 
+let patternsLoaded = false;
+function populatePatterns(patterns) {
+  if (patternsLoaded || !patterns || !patterns.length) return;
+  el.pattern.innerHTML = '';
+  for (const p of patterns) {
+    const o = document.createElement('option');
+    o.value = p.name; o.textContent = `[${p.genre}] ${p.name}`;
+    o.dataset.desc = p.description || '';
+    el.pattern.appendChild(o);
+  }
+  patternsLoaded = true;
+}
+
 function syncControls() {
   if (!settings) return;
+  el.mode.value = settings.mode || 'detect';
+  if (settings.pattern) el.pattern.value = settings.pattern;
+  el.kick_from_audio.checked = !!settings.kick_from_audio;
   el.engine.value = settings.engine || 'baseline';
   el.separation.value = settings.separation;
   el.subdivisions.value = String(settings.subdivisions);
@@ -292,9 +310,13 @@ function syncControls() {
   el.tom_split.checked = !!settings.tom_split;
   for (const k of SLIDERS) { el[k].value = settings[k]; $(SLIDER_OUT[k]).textContent = (+settings[k]).toFixed(SLIDER_DP[k]); }
   updateEngineUI();
+  updateModeUI();
 }
 function readControls() {
   const s = { ...settings };
+  s.mode = el.mode.value;
+  s.pattern = el.pattern.value;
+  s.kick_from_audio = el.kick_from_audio.checked;
   s.engine = el.engine.value;
   s.separation = el.separation.value;
   s.subdivisions = +el.subdivisions.value;
@@ -326,12 +348,31 @@ function updateEngineUI() {
   }
 }
 
+// Pattern mode tiles a template across the window; the ADT engine/tuning groups
+// don't apply, so swap them for the Pattern panel.
+function updateModeUI() {
+  const pattern = el.mode.value === 'pattern';
+  el.patternGroup.style.display = pattern ? '' : 'none';
+  el.engineGroup.style.display = pattern ? 'none' : '';
+  el.baselineGroup.style.display = pattern ? 'none' : '';
+  if (pattern) {
+    el.bandTuning.style.display = 'none';
+    el.drumsepTuning.style.display = 'none';
+  } else {
+    updateEngineUI();  // restore band/drumsep tuning per the chosen engine
+  }
+  const opt = el.pattern.selectedOptions[0];
+  el.patternDesc.textContent = opt ? (opt.dataset.desc || '') : '';
+}
+
 let busy = false;
 async function doPreview(payload) {
   if (busy) return; busy = true;
   el.panel.classList.add('busy'); el.status.classList.remove('err');
-  el.status.textContent = (payload.engine === 'drumsep' || el.engine.value === 'drumsep')
-    ? 'separating drums… (~10s)' : 'transcribing…';
+  const slow = el.mode.value === 'pattern'
+    ? (el.kick_from_audio.checked ? 'tiling + kick from audio… (~10s)' : 'tiling pattern…')
+    : ((payload.engine === 'drumsep' || el.engine.value === 'drumsep') ? 'separating drums… (~10s)' : 'transcribing…');
+  el.status.textContent = slow;
   const start = +el.start.value, length = +el.length.value;
   try {
     const r = await fetch('/api/preview', {
@@ -340,12 +381,13 @@ async function doPreview(payload) {
     });
     const data = await r.json();
     if (!r.ok || data.error) throw new Error(data.error || ('HTTP ' + r.status));
+    populatePatterns(data.patterns);
     preview = data; settings = data.settings; syncControls();
     buildScene(data);
     audio.pause(); audio.src = data.audioUrl; audio.currentTime = 0; resetFired();
     showDiag(data);
-    const eng = data.engine === 'drumsep' ? 'drumsep' : 'baseline';
-    el.status.textContent = `${eng} · ${data.notes.length} notes · ${data.bpm} bpm`;
+    const label = data.mode === 'pattern' ? 'pattern' : (data.engine === 'drumsep' ? 'drumsep' : 'baseline');
+    el.status.textContent = `${label} · ${data.notes.length} notes · ${data.bpm} bpm`;
   } catch (e) {
     el.status.textContent = 'error: ' + e.message; el.status.classList.add('err');
   } finally {
@@ -380,6 +422,9 @@ el.shuffle.addEventListener('click', () => {
   el.start.value = (Math.random() * max).toFixed(1);
   el.startOut.textContent = fmtTime(+el.start.value); previewTuned();
 });
+el.mode.addEventListener('change', () => { updateModeUI(); previewTuned(); });
+el.pattern.addEventListener('change', () => { updateModeUI(); previewTuned(); });
+el.kick_from_audio.addEventListener('change', previewTuned);
 el.engine.addEventListener('change', () => { updateEngineUI(); previewTuned(); });
 el.genre.addEventListener('change', () => {
   // Metal/Rock want the per-drum engine — switch to it automatically if available.
