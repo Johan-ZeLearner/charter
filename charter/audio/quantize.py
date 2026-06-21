@@ -16,6 +16,33 @@ from ..mapping.stage6 import RawDrumEvent
 from .interfaces import BeatGrid, DrumOnset
 
 
+def resample_grid(grid: BeatGrid, mult: float) -> BeatGrid:
+    """Multiply beat density — and thus detected tempo + grid resolution — by ``mult``.
+
+    Fast metal is routinely tracked at HALF its true tempo (the tempo prior favors
+    ~120 BPM). At half tempo a 16th grid is really 8th-note spacing, so adjacent
+    double-bass hits collapse to one ("double bass missing", snare-heavy). ``mult=2``
+    inserts a beat between each pair (recovering true 180 from a detected 90);
+    ``mult=0.5`` keeps every other beat. ``mult=1`` is a no-op.
+    """
+    beats = np.asarray(grid.beat_times, dtype=float)
+    if mult == 1.0 or len(beats) < 2:
+        return grid
+    if mult > 1.0:
+        n = int(round(mult))
+        seg = beats[:-1, None] + (beats[1:, None] - beats[:-1, None]) * (np.arange(n) / n)
+        beats2 = np.append(seg.reshape(-1), beats[-1])
+    else:
+        step = max(1, int(round(1.0 / mult)))
+        beats2 = beats[::step]
+    return BeatGrid(
+        beat_times=beats2,
+        downbeat_times=grid.downbeat_times,  # still valid time positions
+        bpm=float(grid.bpm) * mult,
+        beats_per_bar=grid.beats_per_bar,
+    )
+
+
 def build_tempo_map(grid: BeatGrid, *, resolution: int = DEFAULT_RESOLUTION,
                     coalesce_bpm: float = 1.0, smooth: int = 5) -> TempoMap:
     """Per-beat tempo map from inter-beat intervals.

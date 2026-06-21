@@ -20,7 +20,7 @@ from ..audio import dsp
 from ..audio.beats import choose_beat_tracker
 from ..audio.ingest import decode_audio, read_tags
 from ..audio.interfaces import AudioBuffer
-from ..audio.quantize import build_tempo_map, quantize_onsets
+from ..audio.quantize import build_tempo_map, quantize_onsets, resample_grid
 from ..mapping import map_events
 from .presets import build_engine, resolve_settings
 
@@ -58,6 +58,8 @@ def run_preview(
     else:
         beat_sig = drums
     grid = beat_tracker.track(beat_sig)
+    # Half/double-time correction (the metal double-bass fix) before quantizing.
+    grid = resample_grid(grid, float(settings.get("tempo_mult", 1.0)))
     # drumsep does its own separation from the raw mix; the baseline reads `drums`.
     onsets = transcriber.transcribe(audio if is_drumsep else drums)
     tempo_map = build_tempo_map(grid)

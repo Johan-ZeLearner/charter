@@ -35,7 +35,10 @@ DEFAULTS: dict[str, Any] = {
     "hat_vhigh_ratio": 0.45,     # very-high-band fraction -> hi-hat (lower to find hats)
     "hat_mid_max": 0.30,         # hat only if mid below this
     "tom_split": True,           # drumsep: split toms blue/green by pitch
-    "subdivisions": 4,           # grid: 2=8th, 4=16th, 3=8th-triplet, 6=16th-triplet
+    "subdivisions": 4,           # grid: 2=8th, 4=16th, 8=32nd, 3/6=triplets
+    "tempo_mult": 1.0,           # ×0.5 / ×1 / ×2 — fix half/double-time tracking
+    "kick_gap_s": 0.030,         # drumsep kick onset min gap (LOWER = faster double bass)
+    "snare_gate": 0.13,          # drumsep snare onset threshold (HIGHER = less snare)
     "dynamics": False,           # emit ghost/accent modifiers
     "double_kick": False,        # infer 2x kick from close kicks
     "double_kick_gap_s": 0.140,  # gap under which a kick is marked 2x
@@ -65,14 +68,20 @@ PRESETS: dict[str, dict[str, Any]] = {
         "double_kick": False,
     },
     "Metal": {
+        # Tuned for fast melodic death metal: fine kick gap for sustained double
+        # bass, less snare, a 1/32 grid so fast kicks don't merge, 2x kick on.
+        # If the BPM readout is HALF the real tempo, bump Tempo to ×2.
         "separation": "auto",
         "kick_low_ratio": 0.26,
         "hat_vhigh_ratio": 0.32,
         "onset_delta": 0.05,
         "onset_min_gap_s": 0.030,
+        "subdivisions": 8,            # 1/32 — resolve fast double bass
+        "kick_gap_s": 0.026,          # very fine — catch every double-bass hit
+        "snare_gate": 0.16,           # curb snare over-detection
         "dynamics": True,
         "double_kick": True,
-        "double_kick_gap_s": 0.130,
+        "double_kick_gap_s": 0.110,
     },
     "Pop": {
         "separation": "auto",
@@ -111,8 +120,10 @@ def resolve_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
     out["double_kick"] = bool(out["double_kick"])
     out["tom_split"] = bool(out["tom_split"])
     for f in ("onset_delta", "onset_min_gap_s", "kick_low_ratio", "snare_mid_ratio",
-              "hat_vhigh_ratio", "hat_mid_max", "double_kick_gap_s"):
+              "hat_vhigh_ratio", "hat_mid_max", "double_kick_gap_s",
+              "tempo_mult", "kick_gap_s", "snare_gate"):
         out[f] = float(out[f])
+    out["tempo_mult"] = max(0.25, min(4.0, out["tempo_mult"]))
     if out["engine"] not in ("baseline", "drumsep"):
         out["engine"] = "baseline"
     out["_genre"] = genre or "Default"
@@ -158,6 +169,8 @@ def build_engine(settings: dict[str, Any]):
         dcfg = DrumSepConfig(
             onset_delta=s["onset_delta"],
             onset_min_gap_s=s["onset_min_gap_s"],
+            kick_min_gap_s=s["kick_gap_s"],
+            snare_delta=s["snare_gate"],
             tom_split=s["tom_split"],
             device=s.get("device"),
         )

@@ -45,6 +45,15 @@ The environment is **torch-native**: `.venv` has **torch 2.12 + torchaudio 2.11 
 - **Result on a clay window:** baseline = 22 notes, 0 cymbals (snare mush); **drumsep = ~62 notes with kick + snare + ~17 yellow hi-hats + blue/green toms** — a real kit. The two worst failures (bass-as-kick, no-hi-hat) are fixed because the kick stem has no bassline and the cymbals stem carries the groove.
 - **Wired everywhere:** `choose_transcriber("drumsep")` (graceful fallback to baseline if weights/demucs absent); studio **Engine** dropdown (Baseline fast / DrumSep quality) + tom-split toggle + availability hint; CLI `mp3tochart --engine drumsep` and `charter download-weights`. Pipeline now beat-tracks on an HPSS signal when the separator is passthrough (drumsep self-separates from the raw mix), so the tempo grid stays good.
 
+### Accuracy controls for fast metal (2026-06-21)
+Melodic death metal exposed three linked failures — **double bass missing, snare-heavy, wrong patterns** — all downstream of tempo/grid/onset, not isolation. Fixes shipped (studio + CLI):
+- **Tempo multiplier** (`resample_grid` in `quantize.py`; studio "Tempo ×½/×1/×2", CLI `--tempo-mult`). The DP tracker's 120-BPM-centered prior *mathematically prefers half-time* for fast metal; at half tempo a 16th grid becomes 8th-note spacing and adjacent double-bass hits **merge 2-into-1** (→ missing double bass + relative snare excess). ×2 recovers true tempo. **This is the #1 metal fix** — tell the user: if the BPM readout is half the real tempo, set ×2.
+- **Finer grid** `1/32` (subdiv 8; studio Grid + CLI `--grid 8`) so fast double bass lands on distinct ticks.
+- **Per-stem onset tuning in `DrumSepConfig`** (was one-size-fits-all): kick gets a fine gap (`kick_min_gap_s` 0.030, exposed as "Kick gap") to catch sustained double bass; snare gets a higher threshold (`snare_delta`, exposed as "Snare amount") to curb over-detection. These improved defaults apply to ALL drumsep runs automatically.
+- **Metal preset** retuned for drumsep (1/32, fine kick, less snare, 2× kick on) and **picking Metal/Rock auto-switches the engine to DrumSep**. The studio shows engine-appropriate knobs (drumsep tuning vs baseline band-energy).
+- Verified in a real browser: tempo ×2 doubles the BPM readout (120→240); Metal preset produces a dense kit with "N kicks marked as 2× (double-bass)".
+- **Still unmeasured on the user's actual metal track** (sandbox only has electronic `clay.mp3`) — the user validates in the studio. Likely next tuning: if double bass is still merged at ×2, drop the grid to triplets or lower `kick_gap_s`; if snare-heavy, raise "Snare amount".
+
 **Honest limits (next levers):** 4 stems means hi-hat shares the cymbals stem with crash/ride — v1 maps the whole cymbals stem to a yellow hi-hat (safe, no blue/green crash calls). Ride-vs-crash + open/closed hat is still the blue-lane frontier. A **5-stem model (LarsNet)** would separate hi-hat from cymbals, but its env pins python 3.11 / torch 2.1 / numpy 1.26 (conflicts with this env) + CC BY-NC — documented upgrade, not v1. drumsep weights are **gitignored** (`/model/`, `*.th`) — fetch with `charter download-weights`.
 
 ---

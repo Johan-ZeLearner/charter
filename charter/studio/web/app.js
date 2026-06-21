@@ -24,15 +24,22 @@ const el = {
   start:$('start'), startOut:$('startOut'), length:$('length'), lenOut:$('lenOut'),
   shuffle:$('shuffle'), engine:$('engine'), engineHint:$('engineHint'),
   baselineGroup:$('baselineGroup'), genre:$('genre'), separation:$('separation'),
-  subdivisions:$('subdivisions'), dynamics:$('dynamics'), double_kick:$('double_kick'),
+  subdivisions:$('subdivisions'), tempo_mult:$('tempo_mult'),
+  dynamics:$('dynamics'), double_kick:$('double_kick'),
   tom_split:$('tom_split'), repreview:$('repreview'), play:$('play'), overlay:$('overlay'),
   clock:$('clock'), status:$('status'),
+  drumsepTuning:$('drumsepTuning'), bandTuning:$('bandTuning'),
   // tuning sliders — referenced as el[k] in the SLIDERS loop, so they MUST be here
   onset_delta:$('onset_delta'), kick_low_ratio:$('kick_low_ratio'),
   snare_mid_ratio:$('snare_mid_ratio'), hat_vhigh_ratio:$('hat_vhigh_ratio'),
+  kick_gap_s:$('kick_gap_s'), snare_gate:$('snare_gate'),
 };
-const SLIDERS = ['onset_delta', 'kick_low_ratio', 'snare_mid_ratio', 'hat_vhigh_ratio'];
-const SLIDER_OUT = { onset_delta:'onsetOut', kick_low_ratio:'kickOut', snare_mid_ratio:'snareOut', hat_vhigh_ratio:'hatOut' };
+const SLIDERS = ['onset_delta', 'kick_low_ratio', 'snare_mid_ratio', 'hat_vhigh_ratio',
+                 'kick_gap_s', 'snare_gate'];
+const SLIDER_OUT = { onset_delta:'onsetOut', kick_low_ratio:'kickOut', snare_mid_ratio:'snareOut',
+                     hat_vhigh_ratio:'hatOut', kick_gap_s:'kickGapOut', snare_gate:'snareGateOut' };
+const SLIDER_DP = { onset_delta:2, kick_low_ratio:2, snare_mid_ratio:2, hat_vhigh_ratio:2,
+                    kick_gap_s:3, snare_gate:2 };  // decimal places per slider output
 
 // ---- state ------------------------------------------------------------------
 let duration = 0;            // full song length (s)
@@ -279,10 +286,11 @@ function syncControls() {
   el.engine.value = settings.engine || 'baseline';
   el.separation.value = settings.separation;
   el.subdivisions.value = String(settings.subdivisions);
+  el.tempo_mult.value = String(settings.tempo_mult ?? 1);
   el.dynamics.checked = !!settings.dynamics;
   el.double_kick.checked = !!settings.double_kick;
   el.tom_split.checked = !!settings.tom_split;
-  for (const k of SLIDERS) { el[k].value = settings[k]; $(SLIDER_OUT[k]).textContent = (+settings[k]).toFixed(2); }
+  for (const k of SLIDERS) { el[k].value = settings[k]; $(SLIDER_OUT[k]).textContent = (+settings[k]).toFixed(SLIDER_DP[k]); }
   updateEngineUI();
 }
 function readControls() {
@@ -290,6 +298,7 @@ function readControls() {
   s.engine = el.engine.value;
   s.separation = el.separation.value;
   s.subdivisions = +el.subdivisions.value;
+  s.tempo_mult = +el.tempo_mult.value;
   s.dynamics = el.dynamics.checked;
   s.double_kick = el.double_kick.checked;
   s.tom_split = el.tom_split.checked;
@@ -297,12 +306,14 @@ function readControls() {
   return s;
 }
 
-// The DrumSep engine self-separates, so the band-energy "Separation"/genre knobs
-// don't apply; dim them and flag if the weights aren't installed.
+// Show the tuning knobs that actually apply to the chosen engine: DrumSep self-
+// separates (band-energy knobs + Separation don't apply), the baseline uses them.
 function updateEngineUI() {
   const drumsep = el.engine.value === 'drumsep';
   el.baselineGroup.style.opacity = drumsep ? 0.4 : 1;
   el.separation.disabled = drumsep;
+  el.bandTuning.style.display = drumsep ? 'none' : '';
+  el.drumsepTuning.style.display = drumsep ? '' : 'none';
   if (drumsep && preview && preview.drumsepAvailable === false) {
     el.engineHint.innerHTML =
       'DrumSep weights not found — runs as <b>baseline</b>. Install:<br>' +
@@ -370,14 +381,22 @@ el.shuffle.addEventListener('click', () => {
   el.startOut.textContent = fmtTime(+el.start.value); previewTuned();
 });
 el.engine.addEventListener('change', () => { updateEngineUI(); previewTuned(); });
-el.genre.addEventListener('change', () => previewGenre(el.genre.value));
+el.genre.addEventListener('change', () => {
+  // Metal/Rock want the per-drum engine — switch to it automatically if available.
+  const g = el.genre.value;
+  if ((g === 'Metal' || g === 'Rock') && preview && preview.drumsepAvailable && el.engine.value !== 'drumsep') {
+    el.engine.value = 'drumsep'; updateEngineUI();
+  }
+  previewGenre(g);
+});
 el.separation.addEventListener('change', previewTuned);
 el.subdivisions.addEventListener('change', previewTuned);
+el.tempo_mult.addEventListener('change', previewTuned);
 el.dynamics.addEventListener('change', previewTuned);
 el.double_kick.addEventListener('change', previewTuned);
 el.tom_split.addEventListener('change', previewTuned);
 for (const k of SLIDERS) {
-  el[k].addEventListener('input', () => { $(SLIDER_OUT[k]).textContent = (+el[k].value).toFixed(2); });
+  el[k].addEventListener('input', () => { $(SLIDER_OUT[k]).textContent = (+el[k].value).toFixed(SLIDER_DP[k]); });
   el[k].addEventListener('change', previewTuned);
 }
 el.repreview.addEventListener('click', previewTuned);

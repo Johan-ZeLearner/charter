@@ -22,7 +22,7 @@ from .adt import choose_transcriber
 from .beats import choose_beat_tracker
 from .ingest import decode_audio, encode_opus, read_tags
 from .interfaces import AudioBuffer, BeatTracker, Diagnostics, DrumTranscriber, Separator
-from .quantize import build_tempo_map, quantize_onsets
+from .quantize import build_tempo_map, quantize_onsets, resample_grid
 from .separation import choose_separator
 
 log = logging.getLogger("charter.audio")
@@ -45,8 +45,13 @@ def transcribe_buffer(
     transcriber: DrumTranscriber | None = None,
     map_config: MapConfig | None = None,
     subdivisions: int = 4,
+    tempo_mult: float = 1.0,
 ) -> tuple[Song, Diagnostics]:
-    """Run the full audio->Song pipeline on an in-memory mono buffer (no I/O)."""
+    """Run the full audio->Song pipeline on an in-memory mono buffer (no I/O).
+
+    ``tempo_mult`` corrects half/double-time tracking (``2`` recovers fast metal
+    detected at half tempo — the #1 cause of merged double bass).
+    """
     separator = separator or choose_separator()
     beat_tracker = beat_tracker or choose_beat_tracker()
     transcriber = transcriber or choose_transcriber()
@@ -67,6 +72,9 @@ def transcribe_buffer(
         else:
             beat_sig = drums
         grid = beat_tracker.track(beat_sig)
+        if tempo_mult != 1.0:
+            grid = resample_grid(grid, tempo_mult)
+            log.info("    tempo ×%.2f applied", tempo_mult)
     log.info("    ~%.1f BPM, %d beats", grid.bpm, len(grid.beat_times))
     with _stage(f"Stage 4 transcription [{transcriber.name}]"):
         onsets = transcriber.transcribe(drums)

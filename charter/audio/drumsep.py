@@ -54,10 +54,23 @@ _STEM_ROLE = {"bombo": "kick", "redoblante": "snare", "platillos": "cymbals", "t
 
 @dataclass
 class DrumSepConfig:
-    """Tunables for the per-stem ADT (exposed to the studio)."""
+    """Tunables for the per-stem ADT (exposed to the studio).
 
-    onset_delta: float = 0.08        # per-stem peak-pick threshold
-    onset_min_gap_s: float = 0.050   # min spacing within a stem
+    Onset detection is PER STEM, because the drums have very different demands:
+    fast double bass needs a fine kick gap (don't merge consecutive hits), while
+    the snare stem benefits from a higher threshold to curb over-detection. The
+    one-size-fits-all default was the metal failure mode (double bass merged,
+    snare-heavy).
+    """
+
+    onset_delta: float = 0.08        # default peak-pick threshold (cymbals/toms)
+    onset_min_gap_s: float = 0.045   # default min spacing (cymbals/toms)
+    # Kick: fine gap so sustained double bass / blast beats aren't merged.
+    kick_delta: float = 0.05         # a touch more sensitive — catch every hit
+    kick_min_gap_s: float = 0.030    # ~500 hits/min ceiling; lower for faster blasts
+    # Snare: higher threshold + slightly wider gap to reduce over-detection.
+    snare_delta: float = 0.13
+    snare_min_gap_s: float = 0.055
     tom_split: bool = True           # split toms blue/green by centroid (else all blue)
     tom_centroid_split: float = 180.0  # >= this Hz -> blue (rack), else green (floor)
     device: str | None = None        # mps/cuda/cpu override
@@ -185,21 +198,25 @@ class DrumSepTranscriber(DrumTranscriber):
 
     def transcribe(self, audio: AudioBuffer) -> list[DrumOnset]:
         stems, sr = self._separate(audio)
+        c = self.cfg
         out: list[DrumOnset] = []
-        out += self._stem_onsets(stems.get("kick"), sr, lambda *_: GM_KICK)
-        out += self._stem_onsets(stems.get("snare"), sr, lambda *_: GM_SNARE)
-        out += self._stem_onsets(stems.get("cymbals"), sr, lambda *_: GM_HAT)
-        out += self._stem_onsets(stems.get("toms"), sr, self._tom_gm)
+        out += self._stem_onsets(stems.get("kick"), sr, lambda *_: GM_KICK,
+                                 c.kick_delta, c.kick_min_gap_s)
+        out += self._stem_onsets(stems.get("snare"), sr, lambda *_: GM_SNARE,
+                                 c.snare_delta, c.snare_min_gap_s)
+        out += self._stem_onsets(stems.get("cymbals"), sr, lambda *_: GM_HAT,
+                                 c.onset_delta, c.onset_min_gap_s)
+        out += self._stem_onsets(stems.get("toms"), sr, self._tom_gm,
+                                 c.onset_delta, c.onset_min_gap_s)
         out.sort(key=lambda o: o.time_s)
         return out
 
-    def _stem_onsets(self, sig, sr, gm_for):
+    def _stem_onsets(self, sig, sr, gm_for, delta, min_gap_s):
         """Onsets in one stem -> DrumOnset list. ``gm_for(spec, freqs, sr)`` picks the GM note."""
         if sig is None or sig.size == 0:
             return []
         env, fps = dsp.onset_envelope(sig, sr)
-        frames = dsp.peak_pick(env, fps, delta=self.cfg.onset_delta,
-                               min_gap_s=self.cfg.onset_min_gap_s)
+        frames = dsp.peak_pick(env, fps, delta=delta, min_gap_s=min_gap_s)
         if len(frames) == 0:
             return []
         peak = max(env[frames].max(), 1e-9)

@@ -99,6 +99,8 @@ def _cmd_mp3tochart(args: argparse.Namespace) -> int:
         max_seconds=args.max_seconds,
         separator=separator,
         transcriber=transcriber,
+        subdivisions=args.grid,
+        tempo_mult=args.tempo_mult,
     )
     print(
         f"wrote {folder}  [{diag.gate}]  "
@@ -194,6 +196,10 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--sep", default="auto", choices=["auto", "demucs", "hpss", "passthrough"],
                    help="drum separator for the baseline engine (auto = Demucs if installed, else HPSS)")
     a.add_argument("--device", default=None, help="demucs/drumsep device: mps / cuda / cpu (default auto)")
+    a.add_argument("--tempo-mult", type=float, default=1.0, dest="tempo_mult",
+                   help="tempo correction: 2 = double (fast metal tracked at half), 0.5 = halve")
+    a.add_argument("--grid", type=int, default=4,
+                   help="quantize subdivisions: 4=1/16 (default), 8=1/32 (fast double bass), 6=1/16 triplet")
     a.add_argument("--max-seconds", type=float, default=None,
                    help="only process the first N seconds (fast test on a clip)")
     a.add_argument("--no-audio", action="store_true", help="skip song.opus encoding")
