@@ -5,6 +5,10 @@
 
 ---
 
+## 🔴 THE OPEN FRONTIER — automatic beat/pace detection is bad
+
+The human-correction studio (per-section rework, tap/lock, section editing) is built and solid. The **detector under it is the real problem** on dense/fast metal (half-time octave errors, no drift-following, a correct tap can't win, random downbeats). The full plan to fix it — automation + human-loop, env-aware (rules out madmom/TF/librosa), prioritized P0/P1/P2 with code swap points — is its own doc: **→ [BEAT-DETECTION-HANDOFF.md](./BEAT-DETECTION-HANDOFF.md)**. Quickest win there: drop the 120-BPM prior in `estimate_tempo` for a DFT×ACF hybrid tempogram.
+
 ## 🔄 DIRECTION RESET (2026-06-21) — grounding the beat grid first
 
 The user reset the build to a **simpler, foundation-first** version. Rationale: blind ADT on dense/distorted metal is unreliable, and **everything downstream (drums, bass, other instrument lines) snaps to the beat grid** — so the grid must be accurate, drift-tracking, and *correctable* before anything is built on it.
