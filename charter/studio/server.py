@@ -5,6 +5,7 @@ Routes:
     GET /app.js /styles.css            static
     GET /api/meta                      {name, artist, duration_s}
     GET /api/analyze?tempo_mult&...    beats + tempo curve + sections + waveform
+    GET /api/analyze_region?start&end  re-track one region (per-section rework) in song time
     GET /api/audio                     the full source audio, with HTTP Range (seek)
 
 The grid is the foundation, so the studio analyzes the WHOLE song (beats drift,
@@ -22,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .analyze import analyze_song
+from .analyze import analyze_song, analyze_window
 from .service import song_meta
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -98,16 +99,33 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return self._json(200, song_meta(self.audio_path))
             if route == "/api/audio":
                 return self._serve_audio()
+            def f(name, default):
+                return q.get(name, [str(default)])[0]
+
+            def opt(name):
+                v = q.get(name, [""])[0]
+                return v if v != "" else None
+
             if route == "/api/analyze":
-                def f(name, default):
-                    return q.get(name, [str(default)])[0]
-                hint = q.get("tempo_hint", [""])[0]
                 report = analyze_song(
                     self.audio_path,
                     tempo_mult=float(f("tempo_mult", 1.0)),
-                    tempo_hint=float(hint) if hint else None,
+                    tempo_hint=float(opt("tempo_hint")) if opt("tempo_hint") else None,
                     beats_per_bar=int(f("beats_per_bar", 4)),
-                    phase=int(q["phase"][0]) if "phase" in q else None,
+                    phase=int(opt("phase")) if opt("phase") is not None else None,
+                )
+                return self._json(200, report)
+            if route == "/api/analyze_region":
+                report = analyze_window(
+                    self.audio_path,
+                    float(f("start", 0.0)),
+                    float(f("end", 0.0)),
+                    tempo_mult=float(f("tempo_mult", 1.0)),
+                    tempo_hint=float(opt("tempo_hint")) if opt("tempo_hint") else None,
+                    beats_per_bar=int(f("beats_per_bar", 4)),
+                    phase=int(opt("phase")) if opt("phase") is not None else None,
+                    anchor=float(opt("anchor")) if opt("anchor") is not None else None,
+                    lock=f("lock", "0") in ("1", "true", "True"),
                 )
                 return self._json(200, report)
             return self._json(404, {"error": f"not found: {route}"})

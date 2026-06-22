@@ -50,8 +50,53 @@
         </div>
       </section>
 
+      <section class="group sel" id="sectionPanel" hidden>
+        <h3>Rework section <small id="secTarget"></small></h3>
+        <div class="readout">
+          <div><b id="secBpmOut">—</b><span>section BPM</span></div>
+          <div><b id="secBeatsOut">—</b><span>beats</span></div>
+        </div>
+        <div class="row">
+          <button id="secSplit" class="ghost" title="Split this section at the playhead into two">✂ Split here</button>
+          <button id="secMerge" class="ghost" title="Merge this section with the next one">⤺ Merge next</button>
+        </div>
+        <div class="hint subtle"><b>Right-click</b> the timeline color bar for <b>Split / Merge / Rename</b> · <b>drag</b> a boundary to move it (snaps to beats; Alt = free). Keys: <b>S</b> split · <b>⌫</b> merge.</div>
+        <label>Tempo
+          <select id="sec_tempo_mult">
+            <option value="0.5">×½ (halve)</option>
+            <option value="1" selected>×1 (as detected)</option>
+            <option value="2">×2 (double)</option>
+          </select>
+        </label>
+        <label>Tempo hint (BPM) <output id="secHintOut">auto</output>
+          <input id="sec_tempo_hint" type="range" min="0" max="300" value="0" step="1" />
+        </label>
+        <label>Beats per bar
+          <select id="sec_beats_per_bar">
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+          </select>
+        </label>
+        <div class="row">
+          <button id="secTap" class="ghost">⊕ Tap tempo (T)</button>
+          <button id="secAnchor" class="ghost">⊙ Beat 1 (B)</button>
+        </div>
+        <div class="hint" id="secSeed">▶ Play, then tap <b>T</b> in time with this section — that tempo seeds the re-track. <b>B</b> marks beat 1.</div>
+        <div class="row">
+          <button id="secPhaseShift" class="ghost">⇄ shift downbeat</button>
+          <button id="secReanalyze" class="primary">↻ Re-track (detect)</button>
+        </div>
+        <button id="secLock" class="lock full" hidden title="Build the grid straight from your tapped tempo — detection bypassed">🔒 Lock to my tempo</button>
+        <div class="hint subtle" id="secLockHint" hidden>Detect bypassed — beats built from your tempo + beat 1. The honest fix when the detector won't match your ear.</div>
+        <button id="secReset" class="linklike" hidden>↺ reset this section to the global grid</button>
+      </section>
+
       <section class="group">
         <h3>Sections <small id="sectionCount"></small></h3>
+        <div class="hint subtle">Click a section to rework its grid · right-click the timeline bar for Split / Merge / Rename · drag a boundary to move.</div>
         <div id="sectionList" class="sectionList"></div>
       </section>
 
@@ -71,6 +116,7 @@
       </div>
     </main>
   </div>
+  <div id="ctxmenu" class="ctxmenu" hidden></div>
   <script type="module" src="/app.js"></script>
 </body>
 </html>
