@@ -24,6 +24,13 @@
           <div><b id="beatsOut">—</b><span>beats</span></div>
           <div><b id="barsOut">—</b><span>bars</span></div>
         </div>
+        <label>Detector
+          <select id="engine">
+            <option value="auto" selected>Beat This! (neural, SOTA)</option>
+            <option value="numpy">Hybrid tempogram (fast DSP)</option>
+          </select>
+        </label>
+        <div class="hint">Beat This! is a neural tracker (no tempo prior, follows drift, real downbeats). The hybrid tempogram is the fast pure-DSP floor. Switch and Re-analyze to A/B by ear.</div>
         <label>Tempo
           <select id="tempo_mult">
             <option value="0.5">×½ (halve)</option>

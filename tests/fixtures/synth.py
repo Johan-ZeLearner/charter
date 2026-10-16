@@ -87,3 +87,57 @@ def synth_drum_track(sr: int = 44100, bpm: float = 120.0, bars: int = 2,
         buf = buf / peak * 0.9
     hits.sort()
     return SynthTruth(samples=buf, sr=sr, bpm=bpm, beats_per_bar=beats_per_bar, hits=hits)
+
+
+def synth_even_kicks(sr: int = 22050, bpm: float = 220.0, count: int = 64,
+                     seed: int = 0) -> SynthTruth:
+    """A stream of identical, evenly-spaced kicks at ``bpm`` (a double-bass run).
+
+    No backbeat → no strong half-time subharmonic, so the fundamental pulse is
+    unambiguous. This is the clean "fast metal must not collapse to half-time" probe.
+    Fully deterministic (no noise); ``seed`` is accepted only for API uniformity.
+    """
+    beat = 60.0 / bpm
+    length = int((count * beat + 0.5) * sr)
+    buf = np.zeros(length, dtype=np.float32)
+    kick = _kick(sr)
+    hits: list[tuple[float, str]] = []
+    for b in range(count):
+        t = b * beat
+        i = int(round(t * sr))
+        end = min(length, i + len(kick))
+        buf[i:end] += kick[: end - i]
+        hits.append((t, "kick"))
+    peak = np.max(np.abs(buf))
+    if peak > 0:
+        buf = buf / peak * 0.9
+    return SynthTruth(samples=buf, sr=sr, bpm=bpm, beats_per_bar=4, hits=hits)
+
+
+def synth_tempo_ramp(sr: int = 22050, bpm_start: float = 150.0, bpm_end: float = 190.0,
+                     beats: int = 96, seed: int = 0) -> SynthTruth:
+    """A kick-on-every-beat track whose tempo ramps linearly start→end (accelerando).
+
+    Drives the drift-aware DP: a single global period cannot place these beats, but a
+    per-frame period curve can. ``hits`` carry the ground-truth beat times. Fully
+    deterministic (no noise); ``seed`` is accepted only for API uniformity.
+    """
+    bpms = np.linspace(bpm_start, bpm_end, beats)
+    dts = 60.0 / bpms
+    times = np.concatenate([[0.0], np.cumsum(dts)[:-1]])
+    length = int((times[-1] + 1.0) * sr)
+    buf = np.zeros(length, dtype=np.float32)
+    kick = _kick(sr)
+    hits: list[tuple[float, str]] = []
+    # Even kicks only (no backbeat) so the beat rate is octave-unambiguous — this
+    # isolates the DRIFT behaviour from the separate octave-selection question.
+    for b, t in enumerate(times):
+        i = int(round(t * sr))
+        end = min(length, i + len(kick))
+        buf[i:end] += kick[: end - i]
+        hits.append((float(t), "kick"))
+    peak = np.max(np.abs(buf))
+    if peak > 0:
+        buf = buf / peak * 0.9
+    bpm_med = float(np.median(bpms))
+    return SynthTruth(samples=buf, sr=sr, bpm=bpm_med, beats_per_bar=4, hits=hits)

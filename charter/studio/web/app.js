@@ -14,6 +14,7 @@ import * as THREE from 'three';
 const $ = (id) => document.getElementById(id);
 const el = {
   songinfo:$('songinfo'), bpmOut:$('bpmOut'), beatsOut:$('beatsOut'), barsOut:$('barsOut'),
+  engine:$('engine'),
   tempo_mult:$('tempo_mult'), tempo_hint:$('tempo_hint'), hintOut:$('hintOut'),
   beats_per_bar:$('beats_per_bar'), phaseShift:$('phaseShift'), reanalyze:$('reanalyze'),
   sectionCount:$('sectionCount'), sectionList:$('sectionList'), diag:$('diag'),
@@ -538,7 +539,7 @@ async function analyzeRegion(lock = false) {
   el.status.textContent = lock ? 'locking section…' : 'tracking section…'; el.status.className = 'status busy';
   const s = selected;
   const p = new URLSearchParams({ start: String(s.start), end: String(s.end),
-    tempo_mult: String(s.mult), beats_per_bar: String(s.bpb) });
+    tempo_mult: String(s.mult), beats_per_bar: String(s.bpb), engine: el.engine.value });
   if (s.hint > 0) p.set('tempo_hint', String(s.hint));
   if (s.anchor != null) p.set('anchor', String(s.anchor));
   else if (s.phase != null) p.set('phase', String(s.phase));
@@ -688,6 +689,7 @@ async function analyze() {
   el.status.textContent = 'analyzing…'; el.status.className = 'status busy';
   const p = new URLSearchParams({
     tempo_mult: el.tempo_mult.value, beats_per_bar: el.beats_per_bar.value, phase: String(phase),
+    engine: el.engine.value,
   });
   if (+el.tempo_hint.value > 0) p.set('tempo_hint', el.tempo_hint.value);
   try {
@@ -697,7 +699,7 @@ async function analyze() {
     base = d; bpb = d.beatsPerBar; phase = d.phase;
     regions.clear(); selected = null; focusedBoundary = null; hotBoundary = null; syncSectionPanel();   // a new global grid retires old overrides
     composeGrid(); renderAll(data);
-    el.status.textContent = `${data.analysis.beats} beats · ${d.analysis.sections} sections`;
+    el.status.textContent = `${data.analysis.beats} beats · ${d.analysis.sections} sections · ${d.tracker || '?'}`;
     el.status.className = 'status';
   } catch (e) {
     el.status.textContent = 'error: ' + e.message; el.status.className = 'status err';
@@ -744,6 +746,7 @@ const fmt = (s) => { s = Math.max(0, s); const m = Math.floor(s / 60); const r =
 function togglePlay() { if (audio.paused) audio.play(); else audio.pause(); }
 
 // global grid controls
+el.engine.addEventListener('change', analyze);
 el.tempo_mult.addEventListener('change', analyze);
 el.beats_per_bar.addEventListener('change', () => { phase = 0; analyze(); });
 el.tempo_hint.addEventListener('input', () => { el.hintOut.textContent = +el.tempo_hint.value > 0 ? el.tempo_hint.value : 'auto'; });

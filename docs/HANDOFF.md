@@ -5,9 +5,16 @@
 
 ---
 
-## 🔴 THE OPEN FRONTIER — automatic beat/pace detection is bad
+## 🟢 FRONTIER UPDATE (2026-06-23) — beat/pace detector reworked (P0 done)
 
-The human-correction studio (per-section rework, tap/lock, section editing) is built and solid. The **detector under it is the real problem** on dense/fast metal (half-time octave errors, no drift-following, a correct tap can't win, random downbeats). The full plan to fix it — automation + human-loop, env-aware (rules out madmom/TF/librosa), prioritized P0/P1/P2 with code swap points — is its own doc: **→ [BEAT-DETECTION-HANDOFF.md](./BEAT-DETECTION-HANDOFF.md)**. Quickest win there: drop the 120-BPM prior in `estimate_tempo` for a DFT×ACF hybrid tempogram.
+The detector under the studio was the real problem on dense/fast metal (half-time octave errors, no drift-following, a correct tap couldn't win, random downbeats). **The P0 stack from [BEAT-DETECTION-HANDOFF.md](./BEAT-DETECTION-HANDOFF.md) is now shipped on `main`:**
+
+- **Hybrid DFT×ACF tempogram** (`dsp.estimate_tempo` + `hybrid_tempo_score`): killed the σ=0.6/120-BPM prior and the `bpm_max=200` cap (now 300); the prior is demoted to a wide σ=1.0/130 tiebreaker. **A/B (corroborated):** clay's metal body **OLD=117 (half-time) → NEW=240, and Beat This! independently reports 231**; venator all agree ≈151. *Caveat:* the product still can't choose the metrical **level** (octave/tactus) on ambiguous material — that's inherent; ×2/×½ + tap/lock correct it.
+- **Drift-aware + anchored DP** (`dsp.dp_beat_track`): `bpm` may be a per-frame array (`dsp.estimate_tempo_curve`, a tight drift band around the global) so one pass follows accelerando; and `anchors=` is a **HARD pin** — the fix for "a correct tap can't win" (the middle ground between soft hint and full LOCK). Verified: a tapped beat-1 lands as the downbeat (4 ms onset-snap).
+- **Beat This!** (CPJKU 2024, MIT, no madmom) wired as a real `BeatTracker` (the old `File2Beats` adapter was broken). `analyze_*` route via `_detect_beats` (tap→numpy hard-pin; plain→Beat This! else numpy floor). Studio has a **Detector** dropdown; the chosen tracker is in the payload (`tracker`) + status line. **Beat This! default device = CPU** (a smoke test measured CPU ~1.2 s vs MPS ~10.7 s/40 s clip; the small model makes MPS-fallback thrash dominate); `final0` checkpoint (77 MB) auto-downloads to `~/.cache/torch/hub`. The tracker is memoised so section re-tracks don't reload weights.
+- 63 tests pass (octave-membership, fast-double-bass-not-halftime, drift-beats-scalar, hard-pin); browser-verified both engines, 0 console errors. An adversarial review workflow raised 9 findings, 8 confirmed + all fixed.
+
+**Still open (next, P1/P2 in [BEAT-DETECTION-HANDOFF.md](./BEAT-DETECTION-HANDOFF.md)):** better octave/downbeat **auto-selection** (the one weak spot), **per-beat editing** (drag/add/delete — the anchored-DP hard-pin is the ready backend primitive), a user tempo MIN/MAX band, a **per-song Beat This! activation cache** (instant re-track), and tracking on the **Demucs drum stem** vs full mix on metal.
 
 ## 🔄 DIRECTION RESET (2026-06-21) — grounding the beat grid first
 

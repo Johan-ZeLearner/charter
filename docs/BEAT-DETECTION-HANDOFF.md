@@ -1,9 +1,18 @@
 # Beat / Pace Detection — Handoff
 
-> **Status:** Open frontier · **Created:** 2026-06-22 · **Audience:** the next agent picking up beat/tempo detection
-> **Purpose:** Automatic beat/pace detection is **bad on real music** (dense/distorted melodic death metal, fast double-bass/blast beats, tempo changes). The human-correction studio is built and solid; the *detector under it* is the problem. This is the plan to fix it on **both** fronts — the automation, and the human+automation loop. Read [HANDOFF.md](./HANDOFF.md) for the studio context first.
+> **Status:** 🟢 **P0 SHIPPED 2026-06-23** (was: open frontier) · **Created:** 2026-06-22 · **Audience:** the next agent picking up beat/tempo detection
+> **Purpose:** Automatic beat/pace detection was **bad on real music** (dense/distorted melodic death metal, fast double-bass/blast beats, tempo changes). The human-correction studio is solid; the *detector under it* was the problem. This is the plan to fix it on **both** fronts — automation, and the human+automation loop. Read [HANDOFF.md](./HANDOFF.md) for the studio context first.
 >
 > Grounded in a research + codebase-fit pass (SOTA beat tracking that fits this env, octave-error mitigation, interactive/anchor beat tracking). Line refs were read against the committed code (`7043d55`); prefer the **function names** (stable) over exact line numbers.
+
+> ### ✅ What shipped (2026-06-23) — read this before the (now-historical) plan below
+> All three **P0** tracks are done on `main` (see [HANDOFF.md](./HANDOFF.md) "Frontier update" for the summary + A/B numbers):
+> - **P0 hybrid tempogram** — `dsp.estimate_tempo` is now `hybrid_tempo_score` (DFT×ACF product, `bpm_max=300`, prior demoted to a wide σ=1.0/130 tiebreaker) + `dsp.estimate_tempo_curve` for per-frame drift. A/B: clay body 117→240 (Beat This! agrees 231); venator ≈151. **The one honest caveat:** the product removes *spurious* octaves but cannot pick the metrical *level* when several are genuinely present (hat-8ths, half-time backbeat) — that residual octave/tactus call is the main **remaining** auto weakness, mitigated by ×2/×½ + tap/lock.
+> - **P0 drift-aware + anchored DP** — `dsp.dp_beat_track` accepts a per-frame period array (drift) and `anchors=` HARD pins (a tap/edit wins). Back-compat scalar path preserved (exact).
+> - **P0 Beat This!** — installed (`beat-this soxr rotary-embedding-torch`, no torch/numpy downgrade) and wired as a real `BeatTracker` (the old `BeatThisTracker`/`File2Beats` adapter was broken). `analyze_*` route via `analyze._detect_beats`; studio **Detector** dropdown; `engine` query param; `tracker` in payload. **Device = CPU by default** (smoke test: CPU ~1.2 s vs MPS ~10.7 s/40 s — MPS-fallback thrash dominates the small model). Tracker memoised so re-tracks don't reload the 77 MB `final0` checkpoint.
+> - Tests rewritten/added (`tests/test_audio_dsp.py`, `tests/test_audio_beats.py`); suite **63**. Adversarial review workflow: 9 raised → 8 confirmed → all fixed.
+>
+> **Not yet done (still the roadmap below):** P1 drum-stem tracking, P1 activation cache, P1 tempo MIN/MAX band, P1 warp-marker ramp UI, P0(human) per-beat editing (the anchored-DP pin is the ready primitive), P2 disagreement flags / odd-meter / per-song fine-tune, and better octave/downbeat auto-selection.
 
 ---
 

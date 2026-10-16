@@ -113,6 +113,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                     tempo_hint=float(opt("tempo_hint")) if opt("tempo_hint") else None,
                     beats_per_bar=int(f("beats_per_bar", 4)),
                     phase=int(opt("phase")) if opt("phase") is not None else None,
+                    engine=f("engine", "auto"),
                 )
                 return self._json(200, report)
             if route == "/api/analyze_region":
@@ -126,6 +127,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                     phase=int(opt("phase")) if opt("phase") is not None else None,
                     anchor=float(opt("anchor")) if opt("anchor") is not None else None,
                     lock=f("lock", "0") in ("1", "true", "True"),
+                    engine=f("engine", "auto"),
                 )
                 return self._json(200, report)
             return self._json(404, {"error": f"not found: {route}"})

@@ -16,8 +16,9 @@ from pathlib import Path
 import numpy as np
 
 from ..audio import dsp
+from ..audio.beats import BeatThisTracker, choose_beat_tracker
 from ..audio.ingest import decode_audio
-from ..audio.interfaces import BeatGrid
+from ..audio.interfaces import AudioBuffer, BeatGrid
 from ..audio.quantize import resample_grid
 from .sections import detect_sections
 
@@ -72,6 +73,59 @@ def _tempo_curve(beats: np.ndarray) -> tuple[list[dict], float | None]:
     return curve, round(float(np.median(local)), 1)
 
 
+def _phase_from_downbeats(beats: np.ndarray, downbeats: np.ndarray, bpb: int) -> int:
+    """Most-common bar phase of the beats nearest to a tracker's real downbeats."""
+    beats = np.asarray(beats, dtype=float)
+    downbeats = np.asarray(downbeats, dtype=float)
+    if len(beats) < 2 or len(downbeats) == 0:
+        return 0
+    pos = np.clip(np.searchsorted(beats, downbeats), 1, len(beats) - 1)
+    left = pos - 1
+    nearest = np.where(np.abs(beats[pos] - downbeats) < np.abs(beats[left] - downbeats), pos, left)
+    return int(np.bincount((nearest % bpb).astype(int), minlength=bpb).argmax())
+
+
+def _detect_beats(x: np.ndarray, sr: int, *, engine: str = "auto",
+                  tempo_hint: float | None = None, anchor_local: float | None = None):
+    """Detect beats on a local buffer. Returns (beat_times, downbeats|None, bpm0, env, fps, used).
+
+    ``used`` is the engine that actually ran ("beat-this" / "numpy" / "numpy-hint"), reported
+    independently of ``downbeats`` so the label is right even if Beat This! emits none.
+
+    Routing (the key wiring): a **tap** (``tempo_hint``) means the user is overriding the
+    rate, so we take the controllable numpy path — the tapped BPM seeds a tight drift
+    band and ``anchor_local`` becomes a HARD pin in the DP (the fix for "a correct tap
+    can't win"). With no tap we use the selected tracker: **Beat This!** when available
+    (SOTA, no 120 prior, real downbeats), else the numpy floor (hybrid tempogram +
+    drift-aware DP). ``anchor_local`` still hard-pins the numpy floor.
+    """
+    env, fps = dsp.onset_envelope(x, sr)
+    hint = tempo_hint if (tempo_hint and tempo_hint > 0) else None
+    anchors = [int(round(anchor_local * fps))] if anchor_local is not None else None
+
+    if hint is None:
+        tracker = choose_beat_tracker(engine)
+        if isinstance(tracker, BeatThisTracker):
+            try:
+                grid = tracker.track(AudioBuffer(samples=np.ascontiguousarray(x, np.float32), sr=sr))
+                return (np.asarray(grid.beat_times, float), np.asarray(grid.downbeat_times, float),
+                        float(grid.bpm), env, fps, "beat-this")
+            except Exception:
+                pass  # fall through to the always-available numpy floor
+        bpm0 = dsp.estimate_tempo(env, fps)
+        curve = dsp.estimate_tempo_curve(env, fps, center_bpm=bpm0)
+        used = "numpy"
+    else:
+        bpm0 = float(hint)
+        # tight drift band so the tapped rate is held, but the DP still snaps to real onsets
+        curve = dsp.estimate_tempo_curve(env, fps, center_bpm=bpm0, drift=0.08)
+        used = "numpy-hint"
+
+    frames = dsp.dp_beat_track(env, fps, curve, anchors=anchors)
+    beats = dsp.refine_beat_frames(env, frames) / fps if len(frames) else np.array([])
+    return beats, None, bpm0, env, fps, used
+
+
 def analyze_song(
     path: str | Path,
     *,
@@ -80,21 +134,23 @@ def analyze_song(
     tempo_hint: float | None = None,
     beats_per_bar: int = 4,
     phase: int | None = None,
+    engine: str = "auto",
 ) -> dict:
     """Analyze the song and return a JSON-friendly grid + structure payload."""
     audio = decode_audio(path, sr=ANALYSIS_SR, max_seconds=max_seconds, loudnorm=False)
     x, sr = audio.samples, audio.sr
     duration = len(x) / sr
 
-    env, fps = dsp.onset_envelope(x, sr)
-    prior = tempo_hint if (tempo_hint and tempo_hint > 0) else 120.0
-    bpm0 = dsp.estimate_tempo(env, fps, prior_bpm=prior)
-    beat_frames = dsp.dp_beat_track(env, fps, bpm0)
-    beat_times = dsp.refine_beat_frames(env, beat_frames) / fps if len(beat_frames) else np.array([])
+    beat_times, bt_downbeats, bpm0, env, fps, used = _detect_beats(
+        x, sr, engine=engine, tempo_hint=tempo_hint)
 
     bpb = max(2, int(beats_per_bar))
-    ph = phase if phase is not None else _downbeat_phase(env, fps, beat_times, bpb)
-    ph = ph % bpb
+    if phase is not None:
+        ph = phase % bpb
+    elif bt_downbeats is not None:
+        ph = _phase_from_downbeats(beat_times, bt_downbeats, bpb)
+    else:
+        ph = _downbeat_phase(env, fps, beat_times, bpb) % bpb
     downbeats = beat_times[ph::bpb] if len(beat_times) else np.array([])
 
     grid = BeatGrid(beat_times=beat_times, downbeat_times=downbeats, bpm=bpm0, beats_per_bar=bpb)
@@ -121,11 +177,13 @@ def analyze_song(
         "tempoCurve": tempo_curve,
         "sections": sections,
         "waveform": _waveform_peaks(x),
+        "tracker": used,
         "analysis": {
             "rawBpm": round(float(bpm0), 1),
             "beats": int(len(beats)),
             "downbeats": int(len(downbeats)),
             "sections": len(sections),
+            "tracker": used,
         },
     }
 
@@ -162,10 +220,12 @@ def _locked_grid(start: float, end: float, bpm: float, anchor: float | None,
         "tempoMult": float(tempo_mult),
         "tempoCurve": tempo_curve,
         "locked": True,
+        "tracker": "locked",
         "analysis": {
             "rawBpm": round(bpm, 1),
             "beats": int(len(beats)),
             "downbeats": int(len(downbeats)),
+            "tracker": "locked",
         },
     }
 
@@ -182,6 +242,7 @@ def analyze_window(
     phase: int | None = None,
     anchor: float | None = None,
     lock: bool = False,
+    engine: str = "auto",
 ) -> dict:
     """Re-track the beat grid for a single region ``[start, end)`` in isolation.
 
@@ -213,7 +274,8 @@ def analyze_window(
         "start": round(start, 3), "end": round(max(start, end), 3),
         "beats": [], "downbeats": [], "bpm": None, "beatsPerBar": bpb,
         "phase": 0, "tempoMult": float(tempo_mult), "tempoCurve": [], "locked": False,
-        "analysis": {"rawBpm": None, "beats": 0, "downbeats": 0},
+        "tracker": "none",
+        "analysis": {"rawBpm": None, "beats": 0, "downbeats": 0, "tracker": "none"},
     }
     if end <= start:
         return empty
@@ -231,10 +293,9 @@ def analyze_window(
     if len(x) == 0:
         return empty
 
-    env, fps = dsp.onset_envelope(x, sr)
-    bpm0 = hint if hint is not None else dsp.estimate_tempo(env, fps, prior_bpm=120.0)
-    beat_frames = dsp.dp_beat_track(env, fps, bpm0)
-    beat_local = dsp.refine_beat_frames(env, beat_frames) / fps if len(beat_frames) else np.array([])
+    anchor_local = (float(anchor) - a) if anchor is not None else None
+    beat_local, bt_downbeats, bpm0, env, fps, used = _detect_beats(
+        x, sr, engine=engine, tempo_hint=tempo_hint, anchor_local=anchor_local)
 
     # apply the tempo multiplier on the padded grid, then shift to song time
     grid = BeatGrid(beat_times=beat_local, downbeat_times=np.array([]), bpm=bpm0, beats_per_bar=bpb)
@@ -253,6 +314,8 @@ def analyze_window(
             ph = int(np.argmin(np.abs(beats - float(anchor)))) % bpb
         elif phase is not None:
             ph = int(phase) % bpb
+        elif bt_downbeats is not None and len(bt_downbeats):
+            ph = _phase_from_downbeats(beats, np.asarray(bt_downbeats, float) + a, bpb)
         else:
             ph = _downbeat_phase(env, fps, beats - a, bpb)  # local-frame for env indexing
         downbeats = beats[ph % bpb :: bpb]
@@ -271,9 +334,11 @@ def analyze_window(
         "tempoMult": float(tempo_mult),
         "tempoCurve": tempo_curve,
         "locked": False,
+        "tracker": used,
         "analysis": {
             "rawBpm": round(float(bpm0), 1),
             "beats": int(len(beats)),
             "downbeats": int(len(downbeats)),
+            "tracker": used,
         },
     }
